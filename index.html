@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sidestr spec</title>
+<meta name="description" content="The sidestr protocol, draft 0.0.1: user activated sidechains. Bitcoin's rules beside a Bitcoin-family chain, signed blocks, no subsidy, pegged coins, rules as documents each node adopts.">
+<link rel="canonical" href="https://sidestr.com/spec/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236d28d9'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%23fff'/%3E%3C/svg%3E">
+<meta property="og:site_name" content="sidestr">
+<meta property="og:title" content="sidestr spec, draft 0.0.1">
+<meta property="og:description" content="Signers order blocks; users enforce the rules. The sidestr protocol draft.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://sidestr.com/spec/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="sidestr spec, draft 0.0.1">
+<meta name="twitter:description" content="Signers order blocks; users enforce the rules. The sidestr protocol draft.">
+<style>
+  :root { color-scheme: light dark; --ac: #0f766e; }
+  body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; }
+  a { color: #0969da; text-decoration: none; } a:hover { text-decoration: underline; }
+  nav .brand { font-weight: 700; color: inherit; } nav .brand b { color: var(--ac); }
+  h1 { letter-spacing: -.8px; }
+  table { border-collapse: collapse; margin: 1rem 0; font-size: 0.92em; }
+  th, td { border: 1px solid #8884; padding: 0.3rem 0.6rem; text-align: left; vertical-align: top; }
+  code { font-size: 0.92em; }
+  pre { overflow-x: auto; padding: 0.8rem; background: #8881; }
+  nav { font-size: 0.9em; margin-bottom: 1.5rem; }
+</style>
+</head>
+<body>
+<nav><a class="brand" href="https://sidestr.com/">side<b>·</b>str</a> · <a href="https://github.com/sidestr/spec">source</a> · <a href="SPEC.md">SPEC.md</a> · <a href="README.md">README.md</a></nav>
+<main id="doc">Loading the spec…</main>
+<script type="module">
+  import { marked } from 'https://cdn.jsdelivr.net/npm/marked@15.0.12/lib/marked.esm.js';
+  const md = await (await fetch('SPEC.md')).text();
+  document.getElementById('doc').innerHTML = marked.parse(md);
+</script>
+</body>
+</html>
