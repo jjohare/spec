@@ -51,7 +51,7 @@ chain's network:
 
 | parameter | meaning |
 |---|---|
-| `parent` | the parent chain id, e.g. `btc:testnet4-blake2b` |
+| `parent` | the parent chain id: any chain the engine validates, a sidestr chain included (section 3.1), e.g. `btc:testnet4-blake2b` |
 | `challenge` | a script; a block is valid when its signature satisfies it (section 4) |
 | `powLimit` | blocks must still meet this proof of work, cheap enough for a laptop, so a block costs something without keys; no retarget |
 | `subsidy` | 0 |
@@ -62,6 +62,24 @@ chain's network:
 
 Everything the overlay does not set is inherited from the parent: header format, script
 rules, weight limits, the unified sighash where the parent has it.
+
+### 3.1 Nesting
+
+A parent may itself be a sidestr chain. A peg-in on a siding is the same transaction as a
+peg-in on any parent (section 6), a child's document names the siding as `parent`, and the
+child inherits the siding's rules as the siding inherits its parent's. Chains form a tree,
+coins flow down by peg-in and back up by peg-out, and one validator checks every level with
+the same engine.
+
+Two consequences follow, and a child's document should state its depth:
+
+- **The parent's blocks are the child's clock.** `refundBlocks` and `pegoutBlocks` count the
+  parent's blocks. A parent that produces blocks only when it has transactions (section 11)
+  keeps a heartbeat so that a child's refund path can ever open; a stalled parent freezes
+  every refund below it.
+- **Trust compounds.** A validator of a chain at depth n trusts, for ordering and for which
+  pegs exist, every signer between it and the proof-of-work root. Depth is a cost, cheap for
+  tests and agents, and a reason to keep value near the root.
 
 ## 4. Blocks
 
@@ -164,6 +182,11 @@ chain beside it can keep making blocks while it waits.
 
 ## 11. Distribution
 
+A producer need not make a block when it has nothing to include. Blocks are receipts for
+transactions; between them the chain idles, with a heartbeat block often enough that timelocks
+and maturity keep moving and a wallet can tell an idle chain from a dead signer. The reference
+producer takes a base interval and a shorter one for when its mempool is not empty.
+
 Blocks are served as the block file blaketestnode already syncs from, `[u32 height][u32
 size][block]` with a JSON index, from any mirror. Tips are published as signed events in the
 NIP-333 shape with `d` = chain id, so a node cross-checks a mirror against the signers'
@@ -199,6 +222,8 @@ issued asset is unbacked and every document that names it says so.
   limits it to coins not yet swept, and the record shows it. This is why level 1 is for
   coins with no value.
 - **A mirror lies**: caught by the tip announcement and by validation.
+- **A parent stalls**: every child's refund clock stops with it (3.1). Coins are not lost,
+  they wait; a child pegged off a chain with no heartbeat waits indefinitely.
 
 ## Appendix A. Event kinds
 
