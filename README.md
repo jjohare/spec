@@ -10,3 +10,20 @@ signed documents each node chooses to adopt. Signers order blocks; users enforce
 
 The sibling of [datstr](https://datstr.com/spec/): the same engine, the same documents, the
 same rule that everything a verifier does runs in a browser tab.
+
+## siding/
+
+The reference implementation, on the same engine as datstr and blaketestnode:
+
+    siding/chain.json      the txbt4 siding: id, parent, challenge, the four genesis pegs, powLimit, prefix
+    siding/lib/overlay.mjs the network overlay and the block-signature rule (SPEC 3, 4)
+    siding/lib/block.mjs   building, the signed block data, the virtual transactions, the solution push
+    siding/lib/chain.mjs   genesis (SPEC 5), the block file, the UTXO set, a mempool, production
+    siding/bin/siding.mjs  key | genesis | produce | sync | send
+
+    node siding/bin/siding.mjs key --create           a signer key in ~/.sidestr/<name>.key
+    node siding/bin/siding.mjs produce --dir DIR       blocks every 10 minutes, sooner with transactions
+    node siding/bin/siding.mjs sync --url URL --dir D  validate a producer's chain, no key needed
+
+Needs checkouts of bitcoin-desktop/schema (SCHEMA) and bitcoin-blake/blaketestnode (BLAKETESTNODE).
+The genesis is deterministic: the same chain document gives the same block 0, byte for byte.
