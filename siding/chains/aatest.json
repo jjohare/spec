@@ -1,0 +1,25 @@
+{
+ "id": "sidestr:aatest",
+ "name": "aatest",
+ "parent": "btc:testnet4-blake2b",
+ "comment": "aatest: a second sidestr chain beside the BLAKE2b testnet4, one peg of 25 tBTC from an early coinbase (height 150,372), made 15 September 2026. Level 1, one signer, no value. Not producing blocks until asked.",
+ "challenge": "5120845bfa0e1ff436edc5f6594d90110085805558bf50d25496f87648d197fee65a",
+ "powLimit": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+ "addressPrefix": "ta",
+ "magic": "a1a1e5e5",
+ "pegConfirmations": 6,
+ "refundBlocks": 10000,
+ "pegoutBlocks": 144,
+ "genesisTime": 1789495200,
+ "pegs": [
+  {
+   "txid": "3d445fe4b3fb6bc0c3f57ac8407a1e514371caad4172ff3fafdc97ab6d9c00f6",
+   "vout": 0,
+   "amount": 2500000000,
+   "parentAddress": "tb1p7ls7k4cqm36m0d22v9upz6ph6y9syslz7686rhcyc3yaw2wuw65qvnxwjw",
+   "script": "5120845bfa0e1ff436edc5f6594d90110085805558bf50d25496f87648d197fee65a"
+  }
+ ],
+ "signer": "845bfa0e1ff436edc5f6594d90110085805558bf50d25496f87648d197fee65a",
+ "genesisHash": "63993fae5f50068713e513e276cad371921b1d3a02689072b8237dcf65957a7e"
+}
