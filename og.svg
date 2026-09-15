@@ -13,7 +13,7 @@
   <text x="78" y="258" font-size="50" font-weight="800" fill="#16181d" letter-spacing="-1.6">Signers order blocks.</text>
   <text x="78" y="322" font-size="44" font-style="italic" font-weight="600" fill="#37414d" letter-spacing="-0.6">Users enforce the <tspan fill="#0f766e" font-weight="700">rules</tspan>.</text>
   <text x="80" y="392" font-size="22" fill="#5b6470">Bitcoin's rules beside a Bitcoin chain. Blocks valid because signed.</text>
-  <text x="80" y="422" font-size="22" fill="#5b6470">No subsidy. Every coin a coin locked on the parent, with a refund path.</text>
+  <text x="80" y="422" font-size="22" fill="#5b6470">No subsidy. Every coin locked on the parent, refundable.</text>
   <g>
     <text x="80" y="540" font-family="DejaVu Sans Mono, monospace" font-size="54" font-weight="700" fill="#1a7f37">0</text>
     <text x="80" y="572" font-size="15" font-weight="700" fill="#5b6470" letter-spacing="2">SUBSIDY</text>
