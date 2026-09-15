@@ -1,0 +1,25 @@
+{
+ "id": "sidestr:sidetest2",
+ "name": "sidetest2",
+ "parent": "btc:testnet4-blake2b",
+ "comment": "sidetest2: a contingency chain beside the BLAKE2b testnet4, one peg of 10 tBTC, made 15 September 2026 before the parent's stall at 151,200 so a chain pegged directly off the proof-of-work root stays available. Level 1, one signer, no value. Not producing until asked.",
+ "challenge": "51206c26219eb5f1473fee20df1ce88ed51a7261929fc0a2542e20f8fc7f1fe0bf37",
+ "powLimit": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+ "addressPrefix": "tv",
+ "magic": "b2b2e5e5",
+ "pegConfirmations": 6,
+ "refundBlocks": 10000,
+ "pegoutBlocks": 144,
+ "genesisTime": 1789498920,
+ "pegs": [
+  {
+   "txid": "919a2c82912be97f97be74e98b37e4c9966f1d16131fd9638bf886755eb61cba",
+   "vout": 1,
+   "amount": 1000000000,
+   "parentAddress": "tb1pzwhfn89y64d753zn6vnxp80k3mgfvmncut9d29gu3sda2576meuq2fxah6",
+   "script": "51206c26219eb5f1473fee20df1ce88ed51a7261929fc0a2542e20f8fc7f1fe0bf37"
+  }
+ ],
+ "signer": "6c26219eb5f1473fee20df1ce88ed51a7261929fc0a2542e20f8fc7f1fe0bf37",
+ "genesisHash": "772e019a5488e2377976083cbfae7fe400e8b881b3dda6d6f8d9c842343a6fd0"
+}
