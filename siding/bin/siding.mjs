@@ -5,6 +5,8 @@
 //   siding produce --chain chain.json --dir DIR [--port 3450] [--interval 600] [--tx-interval 30]
 //   siding sync --url http://host:3450 --dir DIR    validate a producer's chain into DIR
 //   siding send --url http://host:3450 --chain chain.json --to <address or script> --amount <sats>
+//   siding send --relay wss://a,wss://b ...   the same, published as a kind 23500 event instead of POSTed
+//   siding produce ... --relay wss://a,wss://b  also follow those relays for kind 23500 transactions
 import { decodeAddress, scriptToAddress } from '../lib/address.mjs';
 import { readFile } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
@@ -13,6 +15,7 @@ import http from 'node:http';
 import { homedir } from 'node:os';
 import { loadEngine } from '../lib/engine.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
+import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
 import { Siding } from '../lib/chain.mjs';
 
 const args = Object.fromEntries(process.argv.slice(3).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
@@ -41,6 +44,11 @@ if (cmd === 'produce') {
   const key = await loadKey(keyPath, { signer }); const pub = signer.pubkeyOf(key);
   if (chain.challenge !== '5120' + pub) throw new Error(`the key at ${keyPath} is not the chain's signer`);
   const s = await new Siding({ engine, chain, dir, signer, log }).open(key);
+  const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (relays.length) subscribe({ relays, chainId: chain.id, verify: engine.nostr.verifyNostrEvent, log, onEvent: (ev, url) => {
+    try { const r = s.submit(String(ev.content).trim()); log(`tx ${r.txid.slice(0, 16)}… from ${url} (event ${ev.id.slice(0, 8)}…) accepted, fee ${r.fee}`); }
+    catch (e) { log(`${url}: event ${ev.id.slice(0, 8)}… refused: ${e.message}`); }
+  } });
   log(`${chain.id}: height ${s.height()} tip ${s.tip().hash.slice(0, 16)}…, ${s.utxo.size} coins`);
   const interval = Number(args.interval ?? 600) * 1000, txInterval = Number(args['tx-interval'] ?? 30) * 1000; let last = Date.now();
   const tick = () => { const due = Date.now() - last >= (s.mempool.size ? txInterval : interval); if (!due) return; try { const r = s.produce(key); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… ${r.txs - 1} txs, fees ${r.fees}`); } catch (e) { log(`produce: ${e.message}`); } };
@@ -50,7 +58,7 @@ if (cmd === 'produce') {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
+    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, relays, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
     if (path === '/chain.json') return json(200, { ...chain, genesisHash: s.genesisHash });
     if (path === '/tip') return json(200, s.tip());
     if (path === '/blocks.json') return json(200, s.index);
@@ -60,7 +68,7 @@ if (cmd === 'produce') {
       return createReadStream(s.dat, { start, end }).pipe(res);
     }
     if (path.startsWith('/coins/')) return json(200, s.coins(path.slice(7).toLowerCase()));
-    if (path === '/tx' && req.method === 'POST') { let body = ''; for await (const c of req) body += c; try { const r = s.submit(body.trim()); log(`tx ${r.txid.slice(0, 16)}… accepted, fee ${r.fee}`); return json(200, r); } catch (e) { return json(400, { error: e.message }); } }
+    if (path === '/tx' && req.method === 'POST') { let body = ''; for await (const c of req) { body += c; if (body.length > 262144) { req.destroy(); return json(413, { error: 'transaction over 256 KB' }); } } try { const r = s.submit(body.trim()); log(`tx ${r.txid.slice(0, 16)}… accepted, fee ${r.fee}`); return json(200, r); } catch (e) { return json(400, { error: e.message }); } }
     json(404, { error: 'not found' });
   }).listen(port, '127.0.0.1', () => log(`producer on http://127.0.0.1:${port}/ every ${interval / 1000} s (${txInterval / 1000} s with transactions)`));
 }
@@ -96,6 +104,12 @@ if (cmd === 'send') {
   const { SIGHASH_UNIFIED } = await import(`${process.env.SCHEMA ?? homedir() + '/bitcoin-desktop/schema'}/codec/interpreter.js`);
   tx.witness = tx.inputs.map((_, i) => { const ht = 0x01 | SIGHASH_UNIFIED; let m = engine.k.interpreter.sighashUnified(tx, i, prevouts, ht, 2); if (typeof m === 'string') m = engine.hash.hexToBytes(m); return [engine.hash.bytesToHex(signer.schnorrSign(m, key)) + ht.toString(16).padStart(2, '0')]; });
   const hex = engine.k.codec.encodeHex('Transaction', tx);
+  if (args.relay) { // as a kind 23500 event from a throwaway key: the transaction authorises itself
+    const relays = String(args.relay).split(',').map((x) => x.trim()).filter(Boolean);
+    const ev = makeEvents({ signer, hash: engine.hash }).txEvent(signer.randomKey(), chain.id, hex);
+    const res = await publish({ relays, event: ev });
+    console.log(JSON.stringify({ event: ev.id, kind: TX_KIND, relays: res, inputs: picked.length, amount, fee }, null, 1)); process.exit(0);
+  }
   const r = await (await fetch(`${base}/tx`, { method: 'POST', body: hex })).json();
   console.log(JSON.stringify({ ...r, inputs: picked.length, amount, fee }, null, 1)); process.exit(0);
 }

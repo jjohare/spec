@@ -191,7 +191,9 @@ Blocks are served as the block file blaketestnode already syncs from, `[u32 heig
 size][block]` with a JSON index, from any mirror. Tips are published as signed events in the
 NIP-333 shape with `d` = chain id, so a node cross-checks a mirror against the signers'
 own announcement. Transactions reach a producer by `POST /tx` or as kind 23500 events on a
-relay; a producer includes what validates. A wallet needs a mirror for blocks and a producer
+relay, content the transaction hex, tagged `chain` = chain id; relays index only single-letter
+tags, so a producer subscribes by kind and checks the tag on receipt. The event's key is
+anyone's: the transaction authorises itself. A producer includes what validates. A wallet needs a mirror for blocks and a producer
 or relay for sending, and nothing else.
 
 ## 12. Assets
