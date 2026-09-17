@@ -3,6 +3,9 @@
 // another prefix still names a script, and the script is what a coin pays, so the caller may
 // accept it with a warning rather than refuse it.
 const CH = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+// plain hex helpers: this file runs in browsers too, where Node's byte type does not exist
+const toHex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+const fromHex = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));
 const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 const polymod = (v) => { let c = 1; for (const x of v) { const b = c >>> 25; c = ((c & 0x1ffffff) << 5) ^ x; for (let i = 0; i < 5; i++) if ((b >>> i) & 1) c ^= GEN[i]; } return c >>> 0; };
 const expand = (hrp) => [...hrp].map((c) => c.charCodeAt(0) >>> 5).concat([0], [...hrp].map((c) => c.charCodeAt(0) & 31));
@@ -19,7 +22,7 @@ export function decodeAddress(address) {
   const version = data[0], bytes = convert(data.slice(1, -6), 5, 8, false); if (!bytes || version > 16) return null;
   if ((version === 0) !== (enc === 'bech32')) return null; // v0 must be bech32, v1+ bech32m
   if (bytes.length < 2 || bytes.length > 40 || (version === 0 && bytes.length !== 20 && bytes.length !== 32)) return null;
-  const program = Buffer.from(bytes).toString('hex');
+  const program = toHex(bytes);
   const op = version === 0 ? '00' : (0x50 + version).toString(16); // OP_0 or OP_1..OP_16
   return { hrp, version, program, script: op + bytes.length.toString(16).padStart(2, '0') + program };
 }
@@ -30,7 +33,7 @@ export function addressToScript(address) { return decodeAddress(address)?.script
 /** script hex -> address under hrp, or null if the script is not a witness program */
 export function scriptToAddress(script, hrp) {
   const m = /^(00|5[1-9a-f]|60)([0-9a-f]{2})([0-9a-f]+)$/i.exec(script ?? ''); if (!m) return null;
-  const version = m[1] === '00' ? 0 : parseInt(m[1], 16) - 0x50, bytes = Buffer.from(m[3], 'hex'); if (bytes.length !== parseInt(m[2], 16)) return null;
+  const version = m[1] === '00' ? 0 : parseInt(m[1], 16) - 0x50, bytes = fromHex(m[3]); if (bytes.length !== parseInt(m[2], 16)) return null;
   const data = [version, ...convert([...bytes], 8, 5, true)];
   const target = version === 0 ? CONST.bech32 : CONST.bech32m;
   const values = expand(hrp).concat(data, [0, 0, 0, 0, 0, 0]); const mod = polymod(values) ^ target;
