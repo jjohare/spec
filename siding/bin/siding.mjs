@@ -5,6 +5,7 @@
 //   siding produce --chain chain.json --dir DIR [--port 3450] [--interval 600] [--tx-interval 30]
 //   siding sync --url http://host:3450 --dir DIR    validate a producer's chain into DIR
 //   siding send --url http://host:3450 --chain chain.json --to <address or script> --amount <sats>
+import { decodeAddress, scriptToAddress } from '../lib/address.mjs';
 import { readFile } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
 import { existsSync, statSync, createReadStream } from 'node:fs';
@@ -25,7 +26,7 @@ const signer = makeSigner(engine);
 
 if (cmd === 'key') {
   const key = await loadKey(keyPath, { create: !!args.create, signer }); const pub = signer.pubkeyOf(key);
-  console.log(JSON.stringify({ key: keyPath, pubkey: pub, challenge: '5120' + pub, address: engine.k.script?.scriptToAddress?.('5120' + pub, engine.k.params) ?? null }, null, 1));
+  console.log(JSON.stringify({ key: keyPath, pubkey: pub, challenge: '5120' + pub, address: scriptToAddress('5120' + pub, engine.k.params.bech32Hrp) }, null, 1));
   process.exit(0);
 }
 const dir = args.dir ?? `${homedir()}/.sidestr/${chain.name}`; await mkdir(dir, { recursive: true });
@@ -81,7 +82,10 @@ if (cmd === 'sync') {
 if (cmd === 'send') {
   // spend the signer's own mature coins: key path on 5120‖pubkey, unified sighash as the chain has it
   const key = await loadKey(keyPath, { signer }); const pub = signer.pubkeyOf(key); const spk = '5120' + pub; const base = args.url.replace(/\/$/, '');
-  const to = /^[0-9a-f]+$/i.test(args.to) ? args.to.toLowerCase() : engine.k.script.addressToScript(args.to, engine.k.params); if (!to) throw new Error(`bad address ${args.to}`);
+  // --to takes a script hex or a segwit address; the script is what is paid, so an address under
+  // another chain's prefix (a parent-chain tb1... for example) is accepted and noted, not refused
+  let to; if (/^[0-9a-f]+$/i.test(args.to ?? '')) to = args.to.toLowerCase();
+  else { const a = decodeAddress(args.to ?? ''); if (!a) throw new Error(`bad address ${args.to}`); to = a.script; if (a.hrp !== engine.k.params.bech32Hrp) console.error(`note: ${args.to.slice(0, 12)}… carries prefix '${a.hrp}', this chain's is '${engine.k.params.bech32Hrp}' (${scriptToAddress(a.script, engine.k.params.bech32Hrp)}); paying its script ${a.script.slice(0, 12)}…`); }
   const amount = Number(args.amount), fee = Number(args.fee ?? 1000);
   const tip = await (await fetch(`${base}/tip`)).json();
   const coins = (await (await fetch(`${base}/coins/${spk}`)).json()).filter((c) => !c.coinbase || tip.height + 1 - c.height >= engine.k.params.coinbaseMaturity).sort((a, b) => b.value - a.value);
