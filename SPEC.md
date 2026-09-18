@@ -193,8 +193,9 @@ producer takes a base interval and a shorter one for when its mempool is not emp
 Blocks are served as the block file blaketestnode already syncs from, `[u32 height][u32
 size][block]` with a JSON index, from any mirror. Tips are published as signed events in the
 NIP-333 shape with `d` = chain id, so a node cross-checks a mirror against the signers'
-own announcement: kind 33333, tags `d` and `n` = chain id, `tip` = height, `u` = a mirror's base
-URL (one tag per mirror), content = the last twelve headers as hex, signed by the signer's key.
+own announcement: kind 33333, tags `d` and `n` = chain id, `t` = `sidestr` (so a directory can
+ask a relay for every sidestr chain at once), `tip` = height, `u` = a mirror's base URL (one tag
+per mirror), content = the last twelve headers as hex, signed by the signer's key.
 A client that knows only the chain id takes the newest announcement, reads `chain.json` from a
 mirror it names, and accepts that mirror when the document's `signer` is the announcement's
 author; a client that already knows the signer takes no other's. A mirror is then held to the

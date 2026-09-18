@@ -9,7 +9,7 @@ const chain = JSON.parse(fs.readFileSync(new URL('../chain.json', import.meta.ur
 const signer = makeSigner(e), events = makeEvents({ signer, hash: e.hash }); const key = signer.randomKey(), pub = signer.pubkeyOf(key);
 const H = (i) => (i.toString(16).padStart(2, '0')).repeat(164);
 const ev = tipEvent({ events, key, chainId: chain.id, headersHex: [H(1), H(2), H(3)], tip: 12, mirrors: ['https://a.example/siding/', 'https://b.example/siding'] });
-t('the event is kind 33333, addressable by d = chain id, and verifies', ev.kind === TIP_KIND && ev.tags.some((x) => x[0] === 'd' && x[1] === chain.id) && e.nostr.verifyNostrEvent(ev));
+t('the event is kind 33333, addressable by d = chain id, tagged t = sidestr, and verifies', ev.kind === TIP_KIND && ev.tags.some((x) => x[0] === 'd' && x[1] === chain.id) && ev.tags.some((x) => x[0] === 't' && x[1] === 'sidestr') && e.nostr.verifyNostrEvent(ev));
 const p = parseTip(ev);
 t('it parses back: tip, headers, mirrors without trailing slashes', p.tip === 12 && p.headersHex.length === 3 && p.headersHex[2] === H(3) && p.mirrors.join() === 'https://a.example/siding,https://b.example/siding' && p.pubkey === pub);
 t('a malformed content is rejected', parseTip({ ...ev, content: 'abc' }) === null);

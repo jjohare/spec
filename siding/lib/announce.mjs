@@ -2,13 +2,14 @@
 // chain id, content the last twelve headers, `u` tags naming mirrors that serve the block file.
 // A client that knows only a chain id asks a relay for this, takes a mirror from it, reads that
 // mirror's chain.json, and accepts the mirror when the document's signer is the event's author.
-// A mirror is then held to the announcement: same tip hash, or it is behind or lying.
+// A mirror is then held to the announcement: same tip hash, or it is behind or lying. The `t` =
+// sidestr tag is what a directory filters on: relays index single-letter tags only.
 // Pure: browsers and Node alike. WebSocket is the platform's.
 export const TIP_KIND = 33333, TIP_HEADERS = 12;
 
 export function tipEvent({ events, key, chainId, headersHex, tip, mirrors = [] }) {
   const start = tip - headersHex.length + 1;
-  return events.signEvent(key, { kind: TIP_KIND, tags: [['d', chainId], ['n', chainId], ['tip', String(tip)], ['alt', `sidestr headers ${start}-${tip} of ${chainId}`], ...mirrors.map((u) => ['u', u, 'mirror'])], content: headersHex.join('') });
+  return events.signEvent(key, { kind: TIP_KIND, tags: [['d', chainId], ['n', chainId], ['t', 'sidestr'], ['tip', String(tip)], ['alt', `sidestr headers ${start}-${tip} of ${chainId}`], ...mirrors.map((u) => ['u', u, 'mirror'])], content: headersHex.join('') });
 }
 export function parseTip(ev) {
   const tag = (n) => (ev.tags ?? []).filter((t) => t[0] === n).map((t) => t[1]);
