@@ -288,6 +288,7 @@ status. The core above changes only when a proposal has run unchanged for a whil
 | 23511 | partial block signature, `e` = proposal (9.1) | ephemeral |
 | 23512 | peg-out PSBT to co-sign (9.1) | ephemeral |
 | 23513 | co-signed peg-out PSBT, `e` = 23512 (9.1) | ephemeral |
+| 23514 | sealed block, content the block hex (9.1) | ephemeral |
 | 33333 | tip, NIP-333 shape, `d` = chain id | addressable |
 | 33500 | rule document, `d` = chain id : activation height | addressable |
 | 33501 | genesis document, `d` = chain id | addressable |

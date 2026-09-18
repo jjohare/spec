@@ -1,6 +1,6 @@
 # Level 2: several signers
 
-*Status: draft, not yet built.* A proposal to the [sidestr spec](../SPEC.md); the record here is the working text, promoted into the spec once it has run unchanged for a while.
+*Status: steps 1–4 built 18 September 2026 (the challenge, PUSHDATA solutions, partial signatures, the round over the relay); `test/federation-test.mjs` and `test/round-test.sh` (three signers on one box: rotation, one down tolerated, two halts, one back resumes). Not yet: the k-of-n peg wallet, a signer on another machine, changing the set.* A proposal to the [sidestr spec](../SPEC.md); the record here is the working text, promoted into the spec once it has run unchanged for a while.
 
 A level 2 chain has `n` signers and a threshold `k`. Nothing changes for a validator:
 the challenge is still a script and a block is still valid when its solution satisfies it.
@@ -52,3 +52,15 @@ rule of one signature per burn per signer, finalized and broadcast by the propos
 **Changing the signers.** A new `signers`/`threshold` pair with its derived challenge is a
 rule document (section 8) with an activation height; the peg outputs move to the new
 descriptor by a peg-out to it, paid by the old set.
+
+**As built (steps 1–4).** `lib/federation.mjs` derives the challenge (internal key = H +
+tagged("sidestr/nums", chain id)·G; leaf `<pk_1> CHECKSIG <pk_2> CHECKSIGADD … <k> NUMEQUAL`);
+the witness carries the slots in reverse leaf order, exactly `k` of them filled (a `k+1`-th
+signature would fail NUMEQUAL), then the leaf, then the control block. `lib/round.mjs` runs the
+round; the sealed block is also published as a kind 23514 event so every signer adds it at once,
+mirrors aside. Two rules the draft did not state: a signer's "one signature per height" relaxes
+once the proposal it signed has had `proposeAfter` seconds to seal and has not — otherwise a
+proposer that dies after collecting fewer than `k` strands the height — and a proposer drops its
+own proposal after `proposeAfter × n` seconds. A federated chain's genesis is sealed by `k` keys
+at `siding new --signers … --key-files …`; each signer starts from a copy of that block file
+(fetching it from a mirror is step 8).

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // The txbt4 siding, or any sidestr chain from a chain document (SPEC 10, 11).
 //   siding new --name <name> --prefix <hrp> [--parent ID] [--comment ...] [--rules assets,pool] [--interval 600] [--port N] [--out FILE]
+//   siding new ... --signers pk1,pk2,pk3 --threshold 2 --key-files f1,f2   a level 2 chain: the challenge is derived, the genesis sealed by k keys
+//   siding produce ... on a level 2 chain, --key-file is one signer's key; blocks come from the round (kinds 23510/23511/23514) [--propose-after 30]
 //       a whole chain: document at chains/<name>/chain.json, signer key, genesis, and the lines to run and mirror it
 //   siding key --create [--chain chain.json]        the signer key (~/.sidestr/<name>.key) and its challenge
 //   siding genesis --chain chain.json --dir DIR     write block 0
@@ -41,6 +43,8 @@ import { buildSpend, deliver, resolveTo } from '../lib/spend.mjs';
 import { FAUCET_KIND, makeEvents as mkEvents } from '../lib/relay.mjs';
 import { tipEvent, TIP_HEADERS } from '../lib/announce.mjs';
 import { Siding } from '../lib/chain.mjs';
+import { makeRound } from '../lib/round.mjs';
+import { federation, partialSignature, sealFederated } from '../lib/federation.mjs';
 
 const args = Object.fromEntries(process.argv.slice(3).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
 const cmd = process.argv[2];
@@ -54,13 +58,20 @@ if (cmd === 'new') {
   const doc = { id: `sidestr:${name}`, name, parent: args.parent ?? 'btc:testnet4-blake2b', comment: args.comment ?? `A sidestr chain beside ${args.parent ?? 'btc:testnet4-blake2b'}, made ${new Date().toISOString().slice(0, 10)}. Level 1: one signer. Coins with no value.`,
     challenge: '', powLimit: '7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', addressPrefix: prefix, magic, pegConfirmations: Number(args['peg-confirmations'] ?? 6), refundBlocks: 10000, pegoutBlocks: 144, pegoutMin: Number(args['pegout-min'] ?? 10000), minFeeRate: Number(args['min-fee-rate'] ?? 1),
     genesisTime: Math.floor(Date.now() / 1000), pegs: [], signer: '', ...(args.rules ? { rules: String(args.rules).split(',').map((x) => x.trim()).filter(Boolean) } : {}) };
-  const eng = await loadEngine(doc); const sg = makeSigner(eng); const kp = args['key-file'] ?? `${homedir()}/.sidestr/${name}.key`; const key = await loadKey(kp, { create: true, signer: sg }); const pub = sg.pubkeyOf(key);
-  doc.challenge = '5120' + pub; doc.signer = pub;
-  const dir = args.dir ?? `${homedir()}/.sidestr/${name}`; await mkdir(dir, { recursive: true }); const engine2 = await loadEngine(doc);
-  const s = await new Siding({ engine: engine2, chain: doc, dir, signer: makeSigner(engine2), log }).open(key); doc.genesisHash = s.genesisHash;
+  const eng = await loadEngine(doc); const sg = makeSigner(eng); let key = null, pub = null, kp = null, sealKeys = [];
+  if (args.signers) { // level 2: the signers are given; the genesis is sealed by k of their keys
+    doc.signers = String(args.signers).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean); doc.threshold = Number(args.threshold ?? Math.ceil(doc.signers.length / 2 + 0.01));
+    const fed = federation(eng, doc); doc.challenge = fed.challenge; delete doc.signer;
+    for (const f of String(args['key-files'] ?? '').split(',').map((x) => x.trim()).filter(Boolean)) sealKeys.push(await loadKey(f, { signer: sg }));
+    if (sealKeys.length < doc.threshold) throw new Error(`--key-files: ${doc.threshold} signer key files are needed to seal the genesis`);
+  } else { kp = args['key-file'] ?? `${homedir()}/.sidestr/${name}.key`; key = await loadKey(kp, { create: true, signer: sg }); pub = sg.pubkeyOf(key); doc.challenge = '5120' + pub; doc.signer = pub; }
+  const dir = args.dir ?? `${homedir()}/.sidestr/${name}`; await mkdir(dir, { recursive: true }); const engine2 = await loadEngine(doc); const sg2 = makeSigner(engine2);
+  const E2 = { ...engine2, interpreter: engine2.k.interpreter, schnorrSign: (m, k) => sg2.schnorrSign(m, k, new Uint8Array(32)) };
+  const seal = sealKeys.length ? (g) => { const fed = engine2.sidestr.federation; const sigs = new Map(); for (const k of sealKeys) sigs.set(sg2.pubkeyOf(k), partialSignature(E2, g, fed, k)); return sealFederated(E2, g, fed, sigs); } : null;
+  const s = await new Siding({ engine: engine2, chain: doc, dir, signer: sg2, log }).open(key, { seal }); doc.genesisHash = s.genesisHash;
   await mkdir(new URL('.', 'file://' + out).pathname, { recursive: true }); await writeFile(out, JSON.stringify(doc, null, 1) + '\n');
   const port = args.port ?? 3450, interval = args.interval ?? 600;
-  console.log(JSON.stringify({ chain: doc.id, document: out, key: kp, signer: pub, address: scriptToAddress(doc.challenge, prefix), genesisHash: doc.genesisHash, dir }, null, 1));
+  console.log(JSON.stringify({ chain: doc.id, document: out, key: kp, signer: pub, signers: doc.signers, threshold: doc.threshold, address: scriptToAddress(doc.challenge, prefix), genesisHash: doc.genesisHash, dir }, null, 1));
   console.log(`
 next:
   1. run it (a pm2 entry, or a shell; hosts are yours, never in this repository):
@@ -96,8 +107,9 @@ if (cmd === 'genesis') {
 
 if (cmd === 'produce') {
   const key = await loadKey(keyPath, { signer }); const pub = signer.pubkeyOf(key);
-  if (chain.challenge !== '5120' + pub) throw new Error(`the key at ${keyPath} is not the chain's signer`);
-  const s = await new Siding({ engine, chain, dir, signer, log }).open(key);
+  const fed = engine.sidestr.federation;
+  if (fed ? !fed.signers.includes(pub) : chain.challenge !== '5120' + pub) throw new Error(`the key at ${keyPath} is not ${fed ? 'one of the chain\'s signers' : 'the chain\'s signer'}`);
+  const s = await new Siding({ engine: { ...engine, signer }, chain, dir, signer, log }).open(fed ? null : key);
   const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean);
   // SPEC 11: announce the tip on the relays after every block, naming the mirrors
   const mirrors = String(args['announce-mirror'] ?? '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean); let announced = -1;
@@ -117,7 +129,10 @@ if (cmd === 'produce') {
   } });
   log(`${chain.id}: height ${s.height()} tip ${s.tip().hash.slice(0, 16)}…, ${s.utxo.size} coins`);
   const interval = Number(args.interval ?? 600) * 1000, txInterval = Number(args['tx-interval'] ?? 30) * 1000; let last = Date.now();
-  const tick = () => { const due = Date.now() - last >= (s.mempool.size ? txInterval : interval); if (!due) return; try { const r = s.produce(key); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… ${r.txs - 1} txs, fees ${r.fees}`); } catch (e) { log(`produce: ${e.message}`); } };
+  // level 2: the round makes the blocks; the tick only says when one is due and whose turn it is
+  const round = fed ? makeRound({ engine: { ...engine, signer }, s, chain, fed, key, pub, relays: String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean), events: mkEvents({ signer, hash: engine.hash }), publish, subscribe, log, proposeAfter: Number(args['propose-after'] ?? 30), onBlock: () => { last = Date.now(); } }) : null;
+  if (fed) log(`level 2: signer ${fed.signers.indexOf(pub) + 1} of ${fed.signers.length}, threshold ${fed.threshold}, proposing after ${Number(args['propose-after'] ?? 30)} s when it is another signer's turn`);
+  const tick = () => { const due = Date.now() - last >= (s.mempool.size ? txInterval : interval); if (fed) { round.tick({ due }).catch((e) => log(`round: ${e.message}`)); return; } if (!due) return; try { const r = s.produce(key); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… ${r.txs - 1} txs, fees ${r.fees}`); } catch (e) { log(`produce: ${e.message}`); } };
   setInterval(tick, 1000);
   // SPEC 6: with a parent view, claim confirmed peg-ins. Which outpoints are already claimed is
   // derived from the chain itself on open; only the scan position and what was found persist.
@@ -150,7 +165,8 @@ if (cmd === 'produce') {
         const pledged = desk ? pledgedByPayTxid().get(p.txid) : null;
         if (st.confirmations >= need) claims.push({ txid: p.txid, vout: p.vout, amount: p.amount, script: pledged ? chain.challenge : p.script });
       }
-      if (claims.length) { const r = s.produce(key, { claims }); last = Date.now(); await lockOutputs(parent, claims, false); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
+      if (claims.length && fed) round.wantClaims(claims);
+      else if (claims.length) { const r = s.produce(key, { claims }); last = Date.now(); await lockOutputs(parent, claims, false); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
     } catch (e) { log(`parent: ${e.message}`); } finally { scanning = false; }
   };
   if (parent) { log(`parent ${args['parent-rpc']}: peg-ins for ${chain.id} from h${pegState.scanned + 1}, claim at ${chain.pegConfirmations ?? 6} confirmations`); setInterval(pegTick, Number(args['parent-poll'] ?? 60) * 1000); pegTick(); }

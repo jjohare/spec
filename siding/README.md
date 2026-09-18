@@ -19,6 +19,7 @@ local checkout in Node (`SCHEMA`, default `~/bitcoin-desktop/schema`) or from js
 | `lib/block.mjs` | building a block, the signed block data, the solution push in the coinbase |
 | `lib/parent.mjs` | the parent seen over RPC: peg-in scanning, confirmations, paying burns from the peg wallet, the wallet's own record |
 | `lib/pledge.mjs` | the desk (§6.2): build and verify a pledge — a pre-signed maturity transaction for a locked parent reward; `parentKernel` for the parent's rules in Node or a page |
+| `lib/federation.mjs`, `lib/round.mjs` | level 2: the k-of-n challenge and witness; the proposal / partial-signature / sealed-block round over the relay |
 | `lib/checkpoint.mjs` | checkpoints (§11): the tip written into the parent as one OP_RETURN, the record, the parent-side send and reconciliation |
 | `lib/announce.mjs` | the tip announcement (kind 33333, `d` = chain id, `t` = sidestr, `u` = mirrors): build, parse, find a chain by id, judge a mirror |
 | `lib/relay.mjs` | Nostr: sign events, follow relays by kind and tag, publish |
@@ -114,7 +115,7 @@ peg-ins, peg-outs), `/chain.json`, `/tip`, `/blocks.json`, `/blocks.dat` (Range 
 
 ## What is specified and not yet built
 
-1. **A second signer (level 2, §9)**: `challenge` as a k-of-n script (the validator already
+1. **A second signer (level 2, §9)** — steps 1–4 built (`proposals/level-2.md`); left: `challenge` as a k-of-n script (the validator already
    runs whatever script the document names), a `cosign` role that follows block proposals on the
    relay and returns partial signatures, the producer assembling the witness, the announcement
    naming the signers, and the parent peg wallet as a matching k-of-n descriptor.
