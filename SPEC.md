@@ -286,7 +286,21 @@ refused one costs nothing. Multi-hop routes are several transactions. The signer
 transactions and so can front-run them; at level 1 that is the signer's to refrain from and the
 document says so, at level 2 it takes `k` of them.
 
-### 12.4 What a wallet does
+### 12.4 Assets between chains
+
+Reserved, and shaped now so the records need not change: an asset may be pegged from one
+sidestr chain to another exactly as sats are pegged from the parent (sections 6 and 7). On the
+origin chain a transaction burns the asset: a `pegout:<destination script hex>` record with a
+tally of the asset assigned to that output. On the destination chain the signers claim it as
+the coinbase issuance of a wrapped asset whose id is `<origin chain id>:<origin asset id>`,
+paired with a `claim:` record naming the origin txid, so a validator with a view of the origin
+(its mirror, its announcements) checks each claim. The way back is the same burn on the
+destination and a payout of the origin asset from what the peg holds. The trust is the
+destination's signers, so this is for level 2 chains; a chain that adopts it says so in its
+document. A pool is one coin under one chain's rules and is never shared across chains: to
+trade an asset from elsewhere, peg it across, then swap.
+
+### 12.5 What a wallet does
 
 A wallet reads pools from the mirror as it reads coins: the pool coin's value and tally are
 the price. It quotes a swap client-side by the formula, builds the transaction with the exact
