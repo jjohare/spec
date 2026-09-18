@@ -27,3 +27,5 @@ The reference implementation, on the same engine as datstr and blaketestnode:
 
 Needs checkouts of bitcoin-desktop/schema (SCHEMA) and bitcoin-blake/blaketestnode (BLAKETESTNODE).
 The genesis is deterministic: the same chain document gives the same block 0, byte for byte.
+
+Picking this up as a developer or an agent: start with [siding/README.md](siding/README.md), the map of the reference implementation and what is not yet built.
