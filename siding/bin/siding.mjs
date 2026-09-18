@@ -61,13 +61,14 @@ if (cmd === 'produce') {
   const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean);
   // SPEC 11: announce the tip on the relays after every block, naming the mirrors
   const mirrors = String(args['announce-mirror'] ?? '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean); let announced = -1;
-  let announceRetryAt = 0; // a failed announcement is retried a minute later, not every tick
+  let announceRetryAt = 0, announcing = false; // a failed announcement is retried a minute later; one in flight at a time
   const announce = async () => {
-    if (!relays.length || !mirrors.length) return; const tip = s.tip(); if (tip.height === announced || Date.now() < announceRetryAt) return;
+    if (!relays.length || !mirrors.length || announcing) return; const tip = s.tip(); if (tip.height === announced || Date.now() < announceRetryAt) return; announcing = true; try {
     const from = Math.max(0, tip.height - TIP_HEADERS + 1); const headersHex = []; for (let h = from; h <= tip.height; h++) headersHex.push(engine.k.codec.encodeHex('BlockHeader', s.node.headers[h]));
     const ev = tipEvent({ events: mkEvents({ signer, hash: engine.hash }), key, chainId: chain.id, headersHex, tip: tip.height, mirrors });
     const res = await publish({ relays, event: ev }); const okc = Object.values(res).filter((r) => r === 'ok').length; if (okc) announced = tip.height; else announceRetryAt = Date.now() + 60000;
     log(`announced tip ${tip.height} ${tip.hash.slice(0, 16)}… (kind 33333, ${headersHex.length} headers, ${mirrors.length} mirror(s)) to ${okc}/${relays.length} relay(s)`);
+    } finally { announcing = false; }
   };
   if (mirrors.length) { setInterval(() => announce().catch((e) => log(`announce: ${e.message}`)), 3000); }
   if (relays.length) subscribe({ relays, chainId: chain.id, verify: engine.nostr.verifyNostrEvent, log, onEvent: (ev, url) => {
