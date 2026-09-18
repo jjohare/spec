@@ -1,0 +1,19 @@
+{
+ "id": "sidestr:capewars-s6",
+ "name": "capewars-s6",
+ "parent": "btc:testnet4-blake2b",
+ "comment": "Capewars season 6, Tideholm: the season's ledger beside the BLAKE2b testnet4. A did:nostr key is an address here. One signer, ten-minute blocks, 10 tBTC pegged in as the season treasury. Coins with no value.",
+ "challenge": "5120998846ecb2baea2543346bb10e190d3e19d8cb87786153de5840eaaa20496be8",
+ "powLimit": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+ "addressPrefix": "cape",
+ "magic": "c56f910b",
+ "pegConfirmations": 6,
+ "refundBlocks": 10000,
+ "pegoutBlocks": 144,
+ "pegoutMin": 10000,
+ "minFeeRate": 1,
+ "genesisTime": 1789731114,
+ "pegs": [],
+ "signer": "998846ecb2baea2543346bb10e190d3e19d8cb87786153de5840eaaa20496be8",
+ "genesisHash": "71ff98c59a715a2066b83844d11c36a53946e24ab7726416d4e8535e483100b7"
+}
