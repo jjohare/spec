@@ -16,7 +16,8 @@
 //   siding produce ... --announce-mirror https://a/siding[,https://b/siding]  publish the tip (NIP-333, kind 33333, d = chain id)
 //       to the relays after every block, naming those mirrors; a client that knows only the chain id finds the chain
 //   siding produce ... --parent-wallet <name>  the parent wallet holding the peg outputs: every burn is paid from it (SPEC 7)
-//   siding produce ... --checkpoint-every N   with a parent wallet: every N blocks, write the tip into the parent as an OP_RETURN
+//   siding produce ... --checkpoint-every N [--checkpoint-wallet <name>]   every N blocks, write the tip into the parent as an OP_RETURN
+//       from that wallet (default: the peg wallet; a separate fee wallet keeps checkpoints away from peg outputs altogether)
 //       (SPEC 11 checkpoints), record <dir>/checkpoints.json; the parent's proof of work then vouches for the history
 //       with `pledge` in the document (SPEC 6.2): records every locked coinbase output as <dir>/coinbases.json, follows kind 33502
 //       pledges on the relays, pays the rate from the signer's coins, broadcasts each pledge at maturity, claims it to the float
@@ -196,25 +197,26 @@ if (cmd === 'produce') {
   if (parent?.walletRpc) { log(`parent wallet ${parent.wallet}: peg-outs for ${chain.id} are paid from it, ${Object.keys(outState.paid).length} paid so far`); setInterval(pegoutTick, Number(args['parent-poll'] ?? 60) * 1000); setTimeout(pegoutTick, 5000); }
   else if (parent) log('no --parent-wallet: peg-outs are recorded but not paid');
   // SPEC 11: checkpoints — the tip into the parent every N blocks, one OP_RETURN from the peg wallet
-  const ckptEvery = Number(args['checkpoint-every'] ?? 0); const ckFile = `${dir}/checkpoints.json`; let ck = { chain: chain.id, every: ckptEvery, checkpoints: [] }; let checkpointing = false;
+  const ckptEvery = Number(args['checkpoint-every'] ?? 0); const ckFile = `${dir}/checkpoints.json`;
+  const ckParent = args['checkpoint-wallet'] && parent ? await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args['checkpoint-wallet'] }) : parent; let ck = { chain: chain.id, every: ckptEvery, checkpoints: [] }; let checkpointing = false;
   try { ck = JSON.parse(await readFile(ckFile, 'utf8')); ck.every = ckptEvery; } catch {}
   const saveCk = () => writeFile(ckFile, JSON.stringify(ck, null, 1));
   const checkpointTick = async () => {
-    if (!parent?.walletRpc || !ckptEvery || checkpointing) return; checkpointing = true;
+    if (!ckParent?.walletRpc || !ckptEvery || checkpointing) return; checkpointing = true;
     try {
       const tip = s.tip(); const last = ck.checkpoints.at(-1);
       if (!last || tip.height - last.height >= ckptEvery) {
-        const already = await sentCheckpoints(parent, { chainId: chain.id }); const key = `${tip.height}:${tip.hash}`;
-        const parentTxid = already.get(key) ?? (await sendCheckpoint(parent, { chainId: chain.id, height: tip.height, hash: tip.hash })).parentTxid;
+        const already = await sentCheckpoints(ckParent, { chainId: chain.id }); const key = `${tip.height}:${tip.hash}`;
+        const parentTxid = already.get(key) ?? (await sendCheckpoint(ckParent, { chainId: chain.id, height: tip.height, hash: tip.hash })).parentTxid;
         ck.checkpoints.push({ height: tip.height, hash: tip.hash, parentTxid, at: Math.floor(Date.now() / 1000), parentHeight: null, confirmations: 0 }); await saveCk();
         log(`checkpoint ${tip.height} ${tip.hash.slice(0, 16)}… written to the parent in ${parentTxid.slice(0, 16)}…${already.has(key) ? ' (found in the wallet history)' : ''}`);
       }
       // where the recent ones sit on the parent now
-      let changed = false; for (const c of ck.checkpoints.slice(-20)) { if (c.confirmations >= 6) continue; const st = await checkpointStatus(parent, c.parentTxid); if (st.parentHeight !== c.parentHeight || st.confirmations !== c.confirmations) { Object.assign(c, { parentHeight: st.parentHeight, parentBlock: st.parentBlock, parentTime: st.time, confirmations: st.confirmations }); changed = true; } }
+      let changed = false; for (const c of ck.checkpoints.slice(-20)) { if (c.confirmations >= 6) continue; const st = await checkpointStatus(ckParent, c.parentTxid); if (st.parentHeight !== c.parentHeight || st.confirmations !== c.confirmations) { Object.assign(c, { parentHeight: st.parentHeight, parentBlock: st.parentBlock, parentTime: st.time, confirmations: st.confirmations }); changed = true; } }
       if (changed) await saveCk();
     } catch (e) { log(`checkpoint: ${e.message}`); } finally { checkpointing = false; }
   };
-  if (parent?.walletRpc && ckptEvery) { log(`checkpoints: every ${ckptEvery} block(s) into the parent from ${parent.wallet}; ${ck.checkpoints.length} so far${ck.checkpoints.length ? `, last at ${ck.checkpoints.at(-1).height}` : ''}`); setInterval(checkpointTick, 30000); setTimeout(checkpointTick, 8000); }
+  if (ckParent?.walletRpc && ckptEvery) { log(`checkpoints: every ${ckptEvery} block(s) into the parent from ${ckParent.wallet}; ${ck.checkpoints.length} so far${ck.checkpoints.length ? `, last at ${ck.checkpoints.at(-1).height}` : ''}`); setInterval(checkpointTick, 30000); setTimeout(checkpointTick, 8000); }
   const port = Number(args.port ?? 3450);
   http.createServer(async (req, res) => {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
