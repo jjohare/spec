@@ -68,10 +68,14 @@ export class Siding {
     for (const i of tx.inputs) { const key = keyOf(i.prevout); if (this.mempoolSpent.has(key)) throw new Error(`input ${key} already spent in the mempool`); const c = this.utxo.get(key); if (!c) throw new Error(`input ${key} is not an unspent coin`);
       if (c.coinbase && this.node.height + 1 - c.height < this.k.params.coinbaseMaturity) throw new Error(`input ${key} is an immature coinbase`); prevouts.push(c.output); inSum += c.output.value; }
     const outSum = tx.outputs.reduce((s, o) => s + o.value, 0); if (outSum > inSum) throw new Error('outputs exceed inputs');
+    // producer policy, published in chain.json so a wallet can compute it: at least minFeeRate sat/vB
+    const vsize = this.vsize(tx), minFee = Math.ceil(vsize * this.minFeeRate()); if (inSum - outSum < minFee) throw new Error(`fee ${inSum - outSum} is below the minimum ${minFee} sats (${vsize} vB at ${this.minFeeRate()} sat/vB)`);
     tx.inputs.forEach((_, i) => { const v = k.interpreter.verifyInput(tx, i, prevouts[i], prevouts, null, { unifiedSighash: true }); if (v.ok !== true) throw new Error(`input ${i}: ${v.error ?? v.reason ?? 'script failed'}`); });
     this.mempool.set(txid, tx); for (const i of tx.inputs) this.mempoolSpent.add(keyOf(i.prevout));
-    return { txid, fee: inSum - outSum };
+    return { txid, fee: inSum - outSum, vsize };
   }
+  vsize(tx) { return Math.ceil(this.k.codec.txWeight(tx) / 4); }
+  minFeeRate() { return Number(this.chain.minFeeRate ?? 1); }
   fees(tx) { return tx.inputs.reduce((s, i) => s + this.utxo.get(keyOf(i.prevout)).output.value, 0) - tx.outputs.reduce((s, o) => s + o.value, 0); }
   // SPEC 4: a block on the tip with everything in the mempool, fees to the signer, signed
   // SPEC 6: a claim pays the peg's amount to the script the peg-in named, followed by its marker

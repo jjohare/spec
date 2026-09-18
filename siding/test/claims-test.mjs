@@ -33,4 +33,14 @@ throws('validator: the same outpoint twice in one block is refused', () => s.add
 t('a well-formed claim block from outside is accepted', (() => { s.addBlock(mk([{ value: 1e8, scriptPubKey: you }, { value: 0, scriptPubKey: claimMarker(PEG2, 0) }])); return s.claimed(PEG2, 0) && s.coins(you).length === 2; })());
 t('and an ordinary block after all that still produces', s.produce(key).height === s.tip().height);
 t('the two claimed coins are immature coinbases until maturity', s.coins(you).every((c) => c.coinbase && !(s.tip().height + 1 - c.height >= s.k.params.coinbaseMaturity)));
+// --- fees: the producer refuses less than minFeeRate sat/vB (policy from chain.json) ---
+while (s.tip().height < 101) s.produce(key); // mature the genesis coin
+const { SIGHASH_UNIFIED } = await import(`${process.env.SCHEMA ?? os.homedir() + '/bitcoin-desktop/schema'}/codec/interpreter.js`);
+const spend = (fee) => { const c = s.coins(me).find((x) => x.height === 0); const [txid, vout] = c.outpoint.split(':'); const tx = { version: 2, inputs: [{ prevout: { txid, vout: Number(vout) }, scriptSig: '', sequence: 0xfffffffd }], outputs: [{ value: c.value - fee, scriptPubKey: you }], lockTime: 0, witness: [] };
+  const prevouts = [{ value: c.value, scriptPubKey: me }]; const ht = 0x01 | SIGHASH_UNIFIED; let m = s.k.interpreter.sighashUnified(tx, 0, prevouts, ht, 2); if (typeof m === 'string') m = engine.hash.hexToBytes(m);
+  tx.witness = [[engine.hash.bytesToHex(signer.schnorrSign(m, key)) + ht.toString(16).padStart(2, '0')]]; return s.k.codec.encodeHex('Transaction', tx); };
+const vs = s.vsize(s.k.codec.decode('Transaction', spend(0)));
+throws(`submit refuses a zero-fee transaction (${vs} vB needs ${vs} sats)`, () => s.submit(spend(0)), /below the minimum/);
+throws('submit refuses one sat short', () => s.submit(spend(vs - 1)), /below the minimum/);
+t('submit accepts exactly the minimum', (() => { const r = s.submit(spend(vs)); return r.fee === vs && r.vsize === vs; })());
 fs.rmSync(dir, { recursive: true, force: true }); console.log(`\n${ok} passed, ${bad} failed`); process.exit(bad ? 1 : 0);

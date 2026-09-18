@@ -10,6 +10,7 @@
  "pegConfirmations": 6,
  "refundBlocks": 10000,
  "pegoutBlocks": 144,
+ "minFeeRate": 1,
  "genesisTime": 1789480800,
  "pegs": [
   {

@@ -4,7 +4,8 @@
 //   siding genesis --chain chain.json --dir DIR     write block 0
 //   siding produce --chain chain.json --dir DIR [--port 3450] [--interval 600] [--tx-interval 30]
 //   siding sync --url http://host:3450 --dir DIR    validate a producer's chain into DIR
-//   siding send --url http://host:3450 --chain chain.json --to <address or script> --amount <sats>
+//   siding send --url http://host:3450 --chain chain.json --to <address or script> --amount <sats> [--fee <sats>]
+//       the fee defaults to the transaction's size at the chain's minFeeRate (chain.json, sat/vB)
 //   siding send --relay wss://a,wss://b ...   the same, published as a kind 23500 event instead of POSTed
 //   siding produce ... --relay wss://a,wss://b  also follow those relays for kind 23500 transactions
 //   siding produce ... --parent-rpc http://host:port/ --parent-cookie FILE [--parent-from H] [--parent-poll 60]
@@ -87,7 +88,7 @@ if (cmd === 'produce') {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, relays, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
+    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
     if (path === '/chain.json') return json(200, { ...chain, genesisHash: s.genesisHash });
     if (path === '/tip') return json(200, s.tip());
     if (path === '/blocks.json') return json(200, s.index);
@@ -123,12 +124,17 @@ if (cmd === 'send') {
   // another chain's prefix (a parent-chain tb1... for example) is accepted and noted, not refused
   let to; if (/^[0-9a-f]+$/i.test(args.to ?? '')) to = args.to.toLowerCase();
   else { const a = decodeAddress(args.to ?? ''); if (!a) throw new Error(`bad address ${args.to}`); to = a.script; if (a.hrp !== engine.k.params.bech32Hrp) console.error(`note: ${args.to.slice(0, 12)}… carries prefix '${a.hrp}', this chain's is '${engine.k.params.bech32Hrp}' (${scriptToAddress(a.script, engine.k.params.bech32Hrp)}); paying its script ${a.script.slice(0, 12)}…`); }
-  const amount = Number(args.amount), fee = Number(args.fee ?? 1000);
+  const amount = Number(args.amount); const rate = Number(chain.minFeeRate ?? 1); let fee = args.fee != null ? Number(args.fee) : null; // null: from size, at the chain's minimum rate
   const tip = await (await fetch(`${base}/tip`)).json();
   const coins = (await (await fetch(`${base}/coins/${spk}`)).json()).filter((c) => !c.coinbase || tip.height + 1 - c.height >= engine.k.params.coinbaseMaturity).sort((a, b) => b.value - a.value);
-  const picked = []; let sum = 0; for (const c of coins) { picked.push(c); sum += c.value; if (sum >= amount + fee) break; } if (sum < amount + fee) throw new Error(`insufficient: ${sum} sats spendable`);
+  // pick coins for the amount plus a fee bound; then size the transaction and settle the fee
+  const bound = fee ?? Math.ceil(rate * 200); const picked = []; let sum = 0; for (const c of coins) { picked.push(c); sum += c.value; if (sum >= amount + bound) break; } if (sum < amount + bound) throw new Error(`insufficient: ${sum} sats spendable`);
   const tx = { version: 2, inputs: picked.map((c) => ({ prevout: { txid: c.outpoint.split(':')[0], vout: Number(c.outpoint.split(':')[1]) }, scriptSig: '', sequence: 0xfffffffd })),
     outputs: [{ value: amount, scriptPubKey: to }, ...(sum - amount - fee > 0 ? [{ value: sum - amount - fee, scriptPubKey: spk }] : [])], lockTime: 0, witness: [] };
+  if (fee == null) { // 65-byte key-path witnesses; the outputs are already laid out, so the size is known
+    const sized = { ...tx, witness: tx.inputs.map(() => ['00'.repeat(65)]) }; const vsize = Math.ceil(engine.k.codec.txWeight(sized) / 4); fee = Math.ceil(vsize * rate);
+    const change = sum - amount - fee; tx.outputs = [{ value: amount, scriptPubKey: to }, ...(change > 0 ? [{ value: change, scriptPubKey: spk }] : [])]; if (change < 0) throw new Error(`insufficient coins for amount ${amount} plus fee ${fee}`);
+  }
   const prevouts = picked.map((c) => ({ value: c.value, scriptPubKey: spk }));
   const { SIGHASH_UNIFIED } = await import(`${process.env.SCHEMA ?? homedir() + '/bitcoin-desktop/schema'}/codec/interpreter.js`);
   tx.witness = tx.inputs.map((_, i) => { const ht = 0x01 | SIGHASH_UNIFIED; let m = engine.k.interpreter.sighashUnified(tx, i, prevouts, ht, 2); if (typeof m === 'string') m = engine.hash.hexToBytes(m); return [engine.hash.bytesToHex(signer.schnorrSign(m, key)) + ht.toString(16).padStart(2, '0')]; });
