@@ -14,6 +14,7 @@
 //       the fee defaults to the transaction's size at the chain's minFeeRate (chain.json, sat/vB)
 //   siding send --relay wss://a,wss://b ...   the same, published as a kind 23500 event instead of POSTed
 //   siding send --pegout --to <parent address> --amount <sats>   burn on the sidechain; the peg wallet pays it on the parent (SPEC 7)
+//   siding send --evm --to 0x<address> --amount <sats>   on an evm chain: deposit sats into the EVM at 1 sat = 1 gwei (proposals/evm.md)
 //   siding produce ... --relay wss://a,wss://b  also follow those relays for kind 23500 transactions
 //   siding faucet --chain chain.json --url http://127.0.0.1:3450 --relay wss://a,wss://b --key-file F [--amount 100000] [--per-address-hours 24] [--per-hour 20]
 //       pay kind 23501 requests (content: an address) from this key, once per address per period, capped per hour
@@ -313,7 +314,7 @@ if (cmd === 'sync') {
 if (cmd === 'send') {
   // spend this key's mature coins as the producer reports them; the fee from size unless --fee
   const key = await loadKey(keyPath, { signer }); const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean);
-  const b = await buildSpend({ engine, chain, signer, key, url: args.url ?? 'http://127.0.0.1:3450', to: args.to, amount: args.amount, fee: args.fee != null ? Number(args.fee) : null, pegout: !!args.pegout });
+  const b = await buildSpend({ engine, chain, signer, key, url: args.url ?? 'http://127.0.0.1:3450', to: args.to, amount: args.amount, fee: args.fee != null ? Number(args.fee) : null, pegout: !!args.pegout, evmDeposit: !!args.evm });
   if (b.note) console.error(`note: ${b.note}`);
   const d = await deliver({ engine, chain, signer, hex: b.hex, relays, url: args.url ?? 'http://127.0.0.1:3450' });
   console.log(JSON.stringify({ txid: b.txid, ...d, inputs: b.inputs, amount: b.amount, fee: b.fee, vsize: b.vsize }, null, 1)); process.exit(d.error ? 1 : 0);

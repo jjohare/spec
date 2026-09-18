@@ -1,0 +1,16 @@
+// The EVM chain, live: a key's Ethereum address, a deposit through the producer, a transfer through
+// the JSON-RPC, the receipt. Reads the sidestr key from a file; the same 32 bytes are the Ethereum key.
+//   node test/evm-live.mjs --url http://127.0.0.1:3459 --chain ../chains/txbt4-evm/chain.json --key-file F [--deposit SATS] [--to 0x…] [--send GWEI]
+import fs from 'node:fs';
+const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
+const url = args.url ?? 'http://127.0.0.1:3459'; const rpc = async (method, params = []) => { const r = await (await fetch(`${url}/evm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json(); if (r.error) throw new Error(`${method}: ${r.error.message}`); return r.result; };
+const [{ createAddressFromPrivateKey, hexToBytes }, T, { createCustomCommon, Mainnet, Hardfork }] = await Promise.all([import('@ethereumjs/util'), import('@ethereumjs/tx'), import('@ethereumjs/common')]);
+const priv = hexToBytes('0x' + fs.readFileSync(args['key-file'], 'utf8').trim()); const me = createAddressFromPrivateKey(priv).toString();
+const chainId = Number(BigInt(await rpc('eth_chainId'))); const common = createCustomCommon({ chainId, name: 'sidestr' }, Mainnet, { hardfork: Hardfork.Cancun });
+console.log(`chain ${chainId} at block ${Number(BigInt(await rpc('eth_blockNumber')))} · my Ethereum address ${me} · balance ${BigInt(await rpc('eth_getBalance', [me, 'latest'])) / 1000000000n} gwei`);
+if (args.deposit) { const { execSync } = await import('node:child_process'); const out = execSync(`node ${new URL('../bin/siding.mjs', import.meta.url).pathname} send --chain ${args.chain} --key-file ${args['key-file']} --url ${url} --evm --to ${me} --amount ${args.deposit}`, { encoding: 'utf8' }); console.log('deposit:', out.trim().split('\n').slice(-3).join(' ').slice(0, 200));
+  for (let i = 0; i < 24; i++) { await new Promise((r) => setTimeout(r, 5000)); const b = BigInt(await rpc('eth_getBalance', [me, 'latest'])); if (b > 0n) { console.log(`  credited: ${b / 1000000000n} gwei after ${(i + 1) * 5} s`); break; } } }
+if (args.send) { const to = args.to ?? '0x' + '77'.repeat(20); const nonce = Number(BigInt(await rpc('eth_getTransactionCount', [me, 'pending']))); const gas = await rpc('eth_estimateGas', [{ from: me, to, value: '0x' + (BigInt(args.send) * 1000000000n).toString(16) }]);
+  const tx = T.createLegacyTx({ nonce, gasPrice: 1000000000n, gasLimit: BigInt(gas), to, value: BigInt(args.send) * 1000000000n }, { common }).sign(priv);
+  const h = await rpc('eth_sendRawTransaction', ['0x' + Buffer.from(tx.serialize()).toString('hex')]); console.log(`sent ${args.send} gwei to ${to.slice(0, 10)}… as ${h.slice(0, 18)}… (nonce ${nonce}, gas ${Number(gas)})`);
+  for (let i = 0; i < 36; i++) { await new Promise((r) => setTimeout(r, 5000)); const rc = await rpc('eth_getTransactionReceipt', [h]); if (rc) { console.log(`  receipt: status ${rc.status}, block ${Number(rc.blockNumber)}, gasUsed ${Number(rc.gasUsed)} · recipient balance ${BigInt(await rpc('eth_getBalance', [to])) / 1000000000n} gwei`); break; } } }
