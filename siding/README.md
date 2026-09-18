@@ -18,13 +18,14 @@ local checkout in Node (`SCHEMA`, default `~/bitcoin-desktop/schema`) or from js
 | `lib/overlay.mjs` | what makes a siding different from its parent: zero subsidy, the signature challenge, the claim rule (§6), the burn rule (§7) |
 | `lib/block.mjs` | building a block, the signed block data, the solution push in the coinbase |
 | `lib/parent.mjs` | the parent seen over RPC: peg-in scanning, confirmations, paying burns from the peg wallet, the wallet's own record |
+| `lib/pledge.mjs` | the desk (§6.2): build and verify a pledge — a pre-signed maturity transaction for a locked parent reward; `parentKernel` for the parent's rules in Node or a page |
 | `lib/announce.mjs` | the tip announcement (kind 33333, `d` = chain id, `t` = sidestr, `u` = mirrors): build, parse, find a chain by id, judge a mirror |
 | `lib/relay.mjs` | Nostr: sign events, follow relays by kind and tag, publish |
 | `lib/spend.mjs` | build a spend (or a burn) from a key's coins and deliver it over the relays or `POST /tx` |
 | `lib/schnorr.mjs` | BIP-340 signing on the schema's curve; no Node imports, so a browser can use it |
 | `lib/sign.mjs` | key files for the CLI (`~/.sidestr/<chain name>.key`, 32 bytes of hex, mode 0600) |
 | `lib/address.mjs` | bech32 / bech32m both ways, any prefix; no `Buffer`, browsers included |
-| `test/` | `claims-test` (§6 + fees), `pegout-test` (§7, chain and parent sides, no node needed), `announce-test` (`--live` asks the relays) |
+| `test/` | `claims-test` (§6 + fees), `pegout-test` (§7, chain and parent sides, no node needed), `pledge-test` (§6.2), `rules-test` (§12), `announce-test` (`--live` asks the relays) |
 
 Three pages build on this, each pinned to a commit of this repository by full hash:
 
@@ -50,6 +51,10 @@ Three pages build on this, each pinned to a commit of this repository by full ha
 - **Peg-ins** (§6): an output on the parent to the chain's peg wallet with `OP_RETURN
   pegin:<chain id>:<sidechain script bytes>`; the producer claims it at `pegConfirmations` with
   a coinbase payout followed by `claim:<txid>:<vout>`.
+- **The desk** (§6.2): a chain whose document carries `pledge` pays a rate now for a coinbase
+  reward locked on the parent, against the miner's pre-signed maturity transaction (kind 33502);
+  the producer records every locked coinbase output it scans (`coinbases.json`) and what it paid
+  (`pledges.json`), broadcasts each pledge at maturity and claims it to the float.
 - **Peg-outs** (§7): a sidechain output `OP_RETURN pegout:<parent script hex>` with a value of
   at least `pegoutMin`; the producer pays it on the parent from the peg wallet, once, with
   `pegout:<chain id>:<txid>` riding along, and keeps the record in `<dir>/pegouts.json`.
