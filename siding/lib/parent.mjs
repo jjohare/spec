@@ -19,15 +19,7 @@ export async function makeParent({ url, cookieFile, wallet = null }) {
 
 // The marker: `pegin:<chain id>:` then the sidechain output script, as raw bytes (61 bytes for a
 // taproot script, inside the 80-byte OP_RETURN policy limit) or, as the spec's text shows it, hex.
-export function pegMarkerData(chainId, script) { return enc.encode(`pegin:${chainId}:`).length + script.length / 2 <= 80 ? new Uint8Array([...enc.encode(`pegin:${chainId}:`), ...fromHex(script)]) : enc.encode(`pegin:${chainId}:${script}`); }
-export function parsePegMarker(spkHex, chainId) {
-  const m = /^6a(?:4c)?([0-9a-f]{2})([0-9a-f]*)$/i.exec(spkHex); if (!m) return null; const d = fromHex(m[2]); if (parseInt(m[1], 16) !== d.length) return null;
-  const prefix = enc.encode(`pegin:${chainId}:`); if (d.length <= prefix.length) return null;
-  for (let i = 0; i < prefix.length; i++) if (d[i] !== prefix[i]) return null;
-  const rest = d.slice(prefix.length); const asText = dec.decode(rest);
-  if (/^([0-9a-f]{2})+$/i.test(asText)) return asText.toLowerCase(); // hex form
-  return toHex(rest);                                                 // raw form
-}
+export { pegMarkerData } from './marker.mjs'; // pure, so a browser can build a pledge without this file's Node imports
 
 // Peg-ins in the parent's blocks [from, to]: a transaction with our marker; its peg output is the
 // first taproot output that is not the marker. Amounts in sats.

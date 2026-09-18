@@ -3,7 +3,7 @@
 // naming the pledger's sidechain script, and is valid only from the maturity height. The desk
 // verifies it now, pays a rate now, and broadcasts it when the height arrives. Pure: browsers
 // and Node alike; the parent's kernel comes from the caller (parentKernel below builds one).
-import { pegMarkerData } from './parent.mjs';
+import { pegMarkerData } from './marker.mjs';
 export const PLEDGE_KIND = 33502; // addressable, d = <parent txid>:<vout>
 const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
