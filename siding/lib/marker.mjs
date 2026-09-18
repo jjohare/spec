@@ -1,6 +1,8 @@
 // The peg-in marker (SPEC 6): `pegin:<chain id>:` then the sidechain output script as raw bytes.
 // Pure: a browser builds a pledge (SPEC 6.2) with it; parent.mjs re-exports it for Node.
 const enc = new TextEncoder();
+const fromHex = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));
+const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 export function pegMarkerData(chainId, script) { return enc.encode(`pegin:${chainId}:`).length + script.length / 2 <= 80 ? new Uint8Array([...enc.encode(`pegin:${chainId}:`), ...fromHex(script)]) : enc.encode(`pegin:${chainId}:${script}`); }
 export function parsePegMarker(spkHex, chainId) {
   const m = /^6a(?:4c)?([0-9a-f]{2})([0-9a-f]*)$/i.exec(spkHex); if (!m) return null; const d = fromHex(m[2]); if (parseInt(m[1], 16) !== d.length) return null;

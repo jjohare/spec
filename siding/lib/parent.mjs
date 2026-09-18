@@ -2,6 +2,7 @@
 // Finds peg-ins for this chain, tells whether one is still unspent and how deep it is.
 // Node only: reads the RPC cookie from a file. Keys never appear on a command line.
 import { readFile } from 'node:fs/promises';
+import { parsePegMarker } from './marker.mjs';
 const enc = new TextEncoder(), dec = new TextDecoder();
 const fromHex = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));
 const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -19,7 +20,7 @@ export async function makeParent({ url, cookieFile, wallet = null }) {
 
 // The marker: `pegin:<chain id>:` then the sidechain output script, as raw bytes (61 bytes for a
 // taproot script, inside the 80-byte OP_RETURN policy limit) or, as the spec's text shows it, hex.
-export { pegMarkerData } from './marker.mjs'; // pure, so a browser can build a pledge without this file's Node imports
+export { pegMarkerData, parsePegMarker } from './marker.mjs'; // pure, so a browser can build a pledge without this file's Node imports
 
 // Peg-ins in the parent's blocks [from, to]: a transaction with our marker; its peg output is the
 // first taproot output that is not the marker. Amounts in sats.
