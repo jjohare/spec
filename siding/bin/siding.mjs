@@ -140,7 +140,7 @@ if (cmd === 'produce') {
   // record is <dir>/pegouts.json, reconciled on start with the wallet's own history so a crash
   // between paying and recording cannot pay twice.
   const outFile = `${dir}/pegouts.json`; let outState = { paid: {} }; let paying = false;
-  try { outState = JSON.parse(await readFile(outFile, 'utf8')); } catch {}
+  try { outState = JSON.parse(await readFile(outFile, 'utf8')); } catch { await writeFile(outFile, JSON.stringify(outState, null, 1)); } // present from the start, so a mirror can carry it
   const pegoutTick = async () => {
     if (!parent?.walletRpc || paying) return; paying = true;
     try {
@@ -161,6 +161,7 @@ if (cmd === 'produce') {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (path === '/pegouts.json') return json(200, outState);
     if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, announce: mirrors.length ? { mirrors, announced } : null, pegouts: { burned: s.pegouts().length, paid: Object.keys(outState.paid).length, min: s.pegoutMin(), payer: parent?.wallet ?? null }, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
     if (path === '/chain.json') return json(200, { ...chain, genesisHash: s.genesisHash });
     if (path === '/tip') return json(200, s.tip());
