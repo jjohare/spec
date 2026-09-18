@@ -21,14 +21,17 @@ export function commitmentOutput(block) {
 export function solutionOf(block) {
   const c = commitmentOutput(block); if (!c) return null;
   const rest = unhex(c.spk.slice(76)); if (!rest.length) return null;
-  const n = rest[0]; if (n === 0 || n > 75 || rest.length < 1 + n) return null; // one direct push
-  const push = hex(rest.slice(1, 1 + n)); if (!push.startsWith(SIGNET_HEADER)) return null;
+  // one push: direct (<= 75 bytes), OP_PUSHDATA1 (<= 255) or OP_PUSHDATA2 (<= 65535) as the size needs (SPEC 4)
+  let n, at; if (rest[0] > 0 && rest[0] <= 75) { n = rest[0]; at = 1; } else if (rest[0] === 0x4c && rest.length >= 2) { n = rest[1]; at = 2; } else if (rest[0] === 0x4d && rest.length >= 3) { n = rest[1] | (rest[2] << 8); at = 3; } else return null;
+  if (n === 0 || rest.length !== at + n) return null;
+  const push = hex(rest.slice(at, at + n)); if (!push.startsWith(SIGNET_HEADER)) return null;
   return { witness: decodeWitness(push.slice(8)), stripped: c.spk.slice(0, 76), index: c.index };
 }
 export function withSolution(block, witnessItems) {
   const c = commitmentOutput(block); if (!c) throw new Error('no witness commitment output to carry the solution');
-  const push = SIGNET_HEADER + encodeWitness(witnessItems); const len = push.length / 2; if (len > 75) throw new Error('solution too long for one push');
-  const cb = structuredClone(block.transactions[0]); cb.outputs[c.index].scriptPubKey = c.spk.slice(0, 76) + len.toString(16).padStart(2, '0') + push;
+  const push = SIGNET_HEADER + encodeWitness(witnessItems); const len = push.length / 2; if (len > 65535) throw new Error('solution too long for one push');
+  const op = len <= 75 ? len.toString(16).padStart(2, '0') : len <= 255 ? '4c' + len.toString(16).padStart(2, '0') : '4d' + (len & 255).toString(16).padStart(2, '0') + (len >> 8).toString(16).padStart(2, '0');
+  const cb = structuredClone(block.transactions[0]); cb.outputs[c.index].scriptPubKey = c.spk.slice(0, 76) + op + push;
   return { ...block, transactions: [cb, ...block.transactions.slice(1)] };
 }
 
@@ -71,10 +74,25 @@ export function buildBlock({ k, hash }, { height, prev, time, transactions, outp
 
 // sign with the challenge key (key path, no tweak: the challenge is 5120‖pubkey), then satisfy
 // the proof of work
-export function signBlock({ k, hash, interpreter, schnorrSign }, block, challenge, privHex) {
+// what a block signature signs: the taproot sighash of the virtual transaction, for the key path
+// (level 1) or for a leaf of the challenge (level 2: `leafHash` of the multi_a leaf)
+export function blockSigHash({ k, hash, interpreter }, block, challenge, leafHash = null) {
   const data = blockData({ codec: k.codec, hash }, block);
   const { toSign, prevout } = virtualTxs({ codec: k.codec }, data, challenge);
-  let msg = interpreter.sighashTaproot(toSign, 0, [prevout], 0x00); if (typeof msg === 'string') msg = hash.hexToBytes(msg);
+  let msg = interpreter.sighashTaproot(toSign, 0, [prevout], 0x00, leafHash ? { leafHash } : {}); if (typeof msg === 'string') msg = hash.hexToBytes(msg);
+  return msg;
+}
+// a block with its witness in place: the solution appended, the merkle root recomputed, the header
+// nonce found for powLimit
+export function sealBlock({ k }, block, witnessItems) {
+  let signed = withSolution(block, witnessItems);
+  signed.header = { ...signed.header, merkleRoot: k.codec.merkleRoot(signed.transactions.map((t) => k.codec.txid(t))) };
+  const target = k.codec.expandCompact(signed.header.bits);
+  for (let nonce = 0; nonce < 0xffffffff; nonce++) { signed.header.nonce = nonce; if (BigInt('0x' + k.codec.blockHash(signed.header)) <= target) break; }
+  return signed;
+}
+export function signBlock({ k, hash, interpreter, schnorrSign }, block, challenge, privHex) {
+  const msg = blockSigHash({ k, hash, interpreter }, block, challenge);
   const sig = hash.bytesToHex(schnorrSign(msg, privHex));
   let signed = withSolution(block, [sig]);
   signed.header = { ...signed.header, merkleRoot: k.codec.merkleRoot(signed.transactions.map((t) => k.codec.txid(t))) };

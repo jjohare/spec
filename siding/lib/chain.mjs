@@ -19,17 +19,23 @@ export class Siding {
     this.bits = k.headers.compactFromTarget(BigInt('0x' + chain.powLimit));
   }
   // SPEC 5: the genesis block mints the pegs, deterministically (zero aux), at the document's time
-  genesisBlock(privHex) {
+  // the federation (level 2) this chain's document names, or null for one signer
+  get federation() { return this.engine.sidestr?.federation ?? null; }
+  buildGenesis() {
     const outputs = this.chain.pegs.map((p) => ({ value: p.amount, scriptPubKey: p.script }));
-    const b = buildBlock(this.engine, { height: 0, prev: NULL32, time: this.chain.genesisTime, transactions: [], outputs, bits: this.bits, marker: `sidestr genesis ${this.chain.id}` });
-    return signBlock({ ...this.engine, interpreter: this.k.interpreter, schnorrSign: (m, key) => this.signer.schnorrSign(m, key, new Uint8Array(32)) }, b, this.chain.challenge, privHex);
+    return buildBlock(this.engine, { height: 0, prev: NULL32, time: this.chain.genesisTime, transactions: [], outputs, bits: this.bits, marker: `sidestr genesis ${this.chain.id}` });
   }
-  // replay the block file, creating it with the genesis when absent
-  async open(privHex) {
+  genesisBlock(privHex) {
+    return signBlock({ ...this.engine, interpreter: this.k.interpreter, schnorrSign: (m, key) => this.signer.schnorrSign(m, key, new Uint8Array(32)) }, this.buildGenesis(), this.chain.challenge, privHex);
+  }
+  // replay the block file, creating it with the genesis when absent: with one signer from its key,
+  // with a federation through `seal(block)`, which the caller makes from k signatures
+  async open(privHex, { seal = null } = {}) {
     let index = readIndex(this.idx);
     if (!index) {
-      if (!privHex) throw new Error('no chain on disk and no key to make the genesis');
-      const g = this.genesisBlock(privHex); const hex = this.k.codec.encodeHex('Block', g); const hash = this.k.codec.blockHash(g.header);
+      if (!privHex && !seal) throw new Error('no chain on disk and no key to make the genesis');
+      if (this.federation && !seal) throw new Error('a federated chain\'s genesis needs k signatures: open(null, { seal })');
+      const g = seal ? seal(this.buildGenesis()) : this.genesisBlock(privHex); const hex = this.k.codec.encodeHex('Block', g); const hash = this.k.codec.blockHash(g.header);
       index = { network: this.chain.id, from: 0, to: -1, blocks: [] };
       appendBlock(this.dat, index, 0, hash, Buffer.from(hex, 'hex')); writeIndex(this.idx, index);
       this.log(`genesis ${hash} written: ${g.transactions[0].outputs.length - 1} pegs, ${this.chain.pegs.reduce((s, p) => s + p.amount, 0)} sats`);
@@ -104,15 +110,23 @@ export class Siding {
   // SPEC 4: a block on the tip with everything in the mempool, fees to the signer, signed
   // SPEC 6: a claim pays the peg's amount to the script the peg-in named, followed by its marker
   claimed(txid, vout) { return this.engine.sidestr?.claims.has(outpointOf(txid, vout)) ?? false; }
-  produce(privHex, { time = Math.floor(Date.now() / 1000), claims = [] } = {}) {
+  // the next block, unsigned: the mempool in order, fees to the challenge, the claims (SPEC 4, 6)
+  buildNext({ time = Math.floor(Date.now() / 1000), claims = [] } = {}) {
     const tip = this.tip(); const t = Math.max(time, tip.time + 1);
     const txs = this.sequenced(); const fees = txs.reduce((s, tx) => s + this.fees(tx), 0);
     const outputs = fees > 0 ? [{ value: fees, scriptPubKey: this.chain.challenge }] : [];
     for (const c of claims) { if (this.claimed(c.txid, c.vout)) throw new Error(`${c.txid}:${c.vout} is already claimed`); outputs.push({ value: c.amount, scriptPubKey: c.script }, { value: 0, scriptPubKey: claimMarker(c.txid, c.vout) }); }
-    const b = buildBlock(this.engine, { height: tip.height + 1, prev: tip.hash, time: t, transactions: txs, outputs, bits: this.bits });
-    const signed = signBlock({ ...this.engine, interpreter: this.k.interpreter, schnorrSign: this.signer.schnorrSign }, b, this.chain.challenge, privHex);
-    const r = this.addBlock(this.k.codec.encodeHex('Block', signed));
-    return { ...r, fees, claims: claims.length };
+    return { block: buildBlock(this.engine, { height: tip.height + 1, prev: tip.hash, time: t, transactions: txs, outputs, bits: this.bits }), fees, claims: claims.length };
   }
+  // one signer: build, sign, add
+  produce(privHex, opts = {}) {
+    if (this.federation) throw new Error('a federated chain makes blocks through the round (proposals/level-2.md), not produce()');
+    const { block, fees, claims } = this.buildNext(opts);
+    const signed = signBlock({ ...this.engine, interpreter: this.k.interpreter, schnorrSign: this.signer.schnorrSign }, block, this.chain.challenge, privHex);
+    const r = this.addBlock(this.k.codec.encodeHex('Block', signed));
+    return { ...r, fees, claims };
+  }
+  // a sealed block (any path) added
+  addSealed(block) { return this.addBlock(this.k.codec.encodeHex('Block', block)); }
   coins(scriptPubKey) { const out = []; for (const [key, c] of this.utxo) if (c.output.scriptPubKey === scriptPubKey) out.push({ outpoint: key, value: c.output.value, height: c.height, coinbase: c.coinbase }); return out; }
 }

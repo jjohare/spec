@@ -2,6 +2,7 @@
 // signed blocks, no subsidy, trivial proof of work and its own address prefix. Data half: the
 // network node and the signature rule joining btc:BlockRules. Code half: the check behind it.
 import { blockData, solutionOf, virtualTxs } from './block.mjs';
+import { federation } from './federation.mjs';
 
 // --- peg-in claims (SPEC 6) --------------------------------------------------------------
 // A claim is two consecutive coinbase outputs: the payout, then an OP_RETURN carrying
@@ -62,7 +63,16 @@ export function sidestrGraph(chain) {
   };
 }
 
-export const sidestrOverlay = (chain, { hash }) => ({
+// Level 2: a document with `signers` and `threshold` names its challenge only through them; a
+// challenge that is not the derived one is a broken document. Needs the curve for the tweak.
+export function checkFederation(chain, { hash, secp }) {
+  if (!chain.signers) return null;
+  const fed = federation({ hash, secp }, chain);
+  if (chain.challenge && chain.challenge.toLowerCase() !== fed.challenge) throw new Error(`${chain.id}: challenge ${chain.challenge.slice(0, 12)}… is not the one ${chain.signers.length} signers with threshold ${chain.threshold} derive (${fed.challenge.slice(0, 12)}…)`);
+  return fed;
+}
+export const sidestrOverlay = (chain, { hash, secp = null }) => ({
+  federation: secp ? checkFederation(chain, { hash, secp }) : null,
   graph: sidestrGraph(chain),
   // outpoints claimed so far, by the height that claimed them. Validation is idempotent for one
   // height (a block re-validated, or a competing block at the same height, may claim the same
