@@ -1,0 +1,28 @@
+{
+ "id": "sidestr:txbt4-desk",
+ "name": "txbt4-desk",
+ "parent": "btc:testnet4-blake2b",
+ "comment": "The desk: a place for miners of the BLAKE2b testnet4 to turn a coinbase reward locked until 158,111 into sats now. Pledge the reward with a pre-signed maturity transaction; the desk pays a rate from its float and collects the reward when it opens. One operator, one price. Coins with no value.",
+ "challenge": "5120f059024b21c5bb3408f63aacd36209ba289412e55d9c0776c30001fc4aba5eb2",
+ "powLimit": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+ "addressPrefix": "dk",
+ "magic": "8f9c002f",
+ "pegConfirmations": 6,
+ "refundBlocks": 10000,
+ "pegoutBlocks": 144,
+ "pegoutMin": 10000,
+ "minFeeRate": 1,
+ "genesisTime": 1789737452,
+ "pegs": [],
+ "signer": "f059024b21c5bb3408f63aacd36209ba289412e55d9c0776c30001fc4aba5eb2",
+ "genesisHash": "06c0da1c5da3ea97e48bc1cf4ee068e926d019a019da5e5fc8da6df1e82fe47d",
+ "pledge": {
+  "rate": 0.9,
+  "lockedFrom": 151055,
+  "maturity": 158111,
+  "pegAddress": "tb1ptk52cdmxkx6kulullgmwkgy0d5kv65m0s03c5r865ksxh8hfh4hqs4y7cj",
+  "pegScript": "51205da8ac3766b1b56e7f9ffa36eb208f6d2ccd536f83e38a0cfaa5a06b9ee9bd6e",
+  "maxPerPledge": 5000000000,
+  "fee": 1000
+ }
+}
