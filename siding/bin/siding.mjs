@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The txbt4 siding, or any sidestr chain from a chain document (SPEC 10, 11).
-//   siding new --name <name> --prefix <hrp> [--parent ID] [--comment ...] [--interval 600] [--port N] [--out FILE]
+//   siding new --name <name> --prefix <hrp> [--parent ID] [--comment ...] [--rules assets,pool] [--interval 600] [--port N] [--out FILE]
 //       a whole chain: document at chains/<name>/chain.json, signer key, genesis, and the lines to run and mirror it
 //   siding key --create [--chain chain.json]        the signer key (~/.sidestr/<name>.key) and its challenge
 //   siding genesis --chain chain.json --dir DIR     write block 0
@@ -45,7 +45,7 @@ if (cmd === 'new') {
   const magic = Array.from(new TextEncoder().encode(`sidestr:${name}`)).reduce((h, b) => ((h * 31 + b) >>> 0), 7).toString(16).padStart(8, '0');
   const doc = { id: `sidestr:${name}`, name, parent: args.parent ?? 'btc:testnet4-blake2b', comment: args.comment ?? `A sidestr chain beside ${args.parent ?? 'btc:testnet4-blake2b'}, made ${new Date().toISOString().slice(0, 10)}. Level 1: one signer. Coins with no value.`,
     challenge: '', powLimit: '7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', addressPrefix: prefix, magic, pegConfirmations: Number(args['peg-confirmations'] ?? 6), refundBlocks: 10000, pegoutBlocks: 144, pegoutMin: Number(args['pegout-min'] ?? 10000), minFeeRate: Number(args['min-fee-rate'] ?? 1),
-    genesisTime: Math.floor(Date.now() / 1000), pegs: [], signer: '' };
+    genesisTime: Math.floor(Date.now() / 1000), pegs: [], signer: '', ...(args.rules ? { rules: String(args.rules).split(',').map((x) => x.trim()).filter(Boolean) } : {}) };
   const eng = await loadEngine(doc); const sg = makeSigner(eng); const kp = args['key-file'] ?? `${homedir()}/.sidestr/${name}.key`; const key = await loadKey(kp, { create: true, signer: sg }); const pub = sg.pubkeyOf(key);
   doc.challenge = '5120' + pub; doc.signer = pub;
   const dir = args.dir ?? `${homedir()}/.sidestr/${name}`; await mkdir(dir, { recursive: true }); const engine2 = await loadEngine(doc);

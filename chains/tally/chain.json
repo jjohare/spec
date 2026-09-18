@@ -1,0 +1,23 @@
+{
+ "id": "sidestr:tally",
+ "name": "tally",
+ "parent": "btc:testnet4-blake2b",
+ "comment": "A ledger beside the BLAKE2b testnet4 with issued assets and pools (SPEC 12): one signer, ten-minute blocks, 50 tBTC pegged in. Every asset here is unbacked; coins with no value.",
+ "challenge": "51205173bd0335772a166f674af7a0eced5b0344ec321b78280ead6b93b21ec91711",
+ "powLimit": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+ "addressPrefix": "ty",
+ "magic": "a8eec2c5",
+ "pegConfirmations": 6,
+ "refundBlocks": 10000,
+ "pegoutBlocks": 144,
+ "pegoutMin": 10000,
+ "minFeeRate": 1,
+ "genesisTime": 1789732147,
+ "pegs": [],
+ "signer": "5173bd0335772a166f674af7a0eced5b0344ec321b78280ead6b93b21ec91711",
+ "rules": [
+  "assets",
+  "pool"
+ ],
+ "genesisHash": "60f4861985b957828aff3871095d1645dbbf6bc3e024434f70baaeaf8e652df3"
+}
