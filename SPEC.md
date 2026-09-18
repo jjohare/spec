@@ -262,9 +262,9 @@ id is the pool id, minted and destroyed only by this rule.
 
 Opening: a transaction carries `pool:self:<vout>` naming an output with script `51`, value
 `x0 > 0` and a tally of `y0 > 0` of exactly one asset `A`; the same transaction tallies
-`floor(sqrt(x0 * y0))` shares of asset `<pool id>` to outputs of its choice (as `tally:self:…`
-is not available, shares in the opening transaction are tallied as `tally:pool:…`, resolved to
-the pool id). A pool coin is never tallied with a second asset.
+`floor(sqrt(x0 * y0))` shares to outputs of its choice as `tally:self:…`: the pool id is this
+txid, so `self` is the share asset here, and a transaction that opens a pool does not also
+`issue:`. A pool coin is never tallied with a second asset.
 
 Spending: a transaction spends at most one pool coin, and recreates exactly one output with
 script `51`, a `pool:<pool id>:<vout>` record, value `x'` and a tally `y'` of `A`. Let `S` be
