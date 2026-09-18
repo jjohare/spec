@@ -8,6 +8,8 @@
 //       the fee defaults to the transaction's size at the chain's minFeeRate (chain.json, sat/vB)
 //   siding send --relay wss://a,wss://b ...   the same, published as a kind 23500 event instead of POSTed
 //   siding produce ... --relay wss://a,wss://b  also follow those relays for kind 23500 transactions
+//   siding faucet --chain chain.json --url http://127.0.0.1:3450 --relay wss://a,wss://b --key-file F [--amount 100000] [--per-address-hours 24] [--per-hour 20]
+//       pay kind 23501 requests (content: an address) from this key, once per address per period, capped per hour
 //   siding produce ... --parent-rpc http://host:port/ --parent-cookie FILE [--parent-from H] [--parent-poll 60]
 //       with a parent view (SPEC 6): scan the parent for this chain's peg-ins and claim each once it has
 //       pegConfirmations; scan state in <dir>/pegins.json
@@ -21,6 +23,8 @@ import { loadEngine } from '../lib/engine.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
 import { makeParent, scanPegins, pegStatus } from '../lib/parent.mjs';
+import { buildSpend, deliver, resolveTo } from '../lib/spend.mjs';
+import { FAUCET_KIND } from '../lib/relay.mjs';
 import { Siding } from '../lib/chain.mjs';
 
 const args = Object.fromEntries(process.argv.slice(3).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
@@ -118,34 +122,35 @@ if (cmd === 'sync') {
 }
 
 if (cmd === 'send') {
-  // spend the signer's own mature coins: key path on 5120‖pubkey, unified sighash as the chain has it
-  const key = await loadKey(keyPath, { signer }); const pub = signer.pubkeyOf(key); const spk = '5120' + pub; const base = args.url.replace(/\/$/, '');
-  // --to takes a script hex or a segwit address; the script is what is paid, so an address under
-  // another chain's prefix (a parent-chain tb1... for example) is accepted and noted, not refused
-  let to; if (/^[0-9a-f]+$/i.test(args.to ?? '')) to = args.to.toLowerCase();
-  else { const a = decodeAddress(args.to ?? ''); if (!a) throw new Error(`bad address ${args.to}`); to = a.script; if (a.hrp !== engine.k.params.bech32Hrp) console.error(`note: ${args.to.slice(0, 12)}… carries prefix '${a.hrp}', this chain's is '${engine.k.params.bech32Hrp}' (${scriptToAddress(a.script, engine.k.params.bech32Hrp)}); paying its script ${a.script.slice(0, 12)}…`); }
-  const amount = Number(args.amount); const rate = Number(chain.minFeeRate ?? 1); let fee = args.fee != null ? Number(args.fee) : null; // null: from size, at the chain's minimum rate
-  const tip = await (await fetch(`${base}/tip`)).json();
-  const coins = (await (await fetch(`${base}/coins/${spk}`)).json()).filter((c) => !c.coinbase || tip.height + 1 - c.height >= engine.k.params.coinbaseMaturity).sort((a, b) => b.value - a.value);
-  // pick coins for the amount plus a fee bound; then size the transaction and settle the fee
-  const bound = fee ?? Math.ceil(rate * 200); const picked = []; let sum = 0; for (const c of coins) { picked.push(c); sum += c.value; if (sum >= amount + bound) break; } if (sum < amount + bound) throw new Error(`insufficient: ${sum} sats spendable`);
-  const tx = { version: 2, inputs: picked.map((c) => ({ prevout: { txid: c.outpoint.split(':')[0], vout: Number(c.outpoint.split(':')[1]) }, scriptSig: '', sequence: 0xfffffffd })),
-    outputs: [{ value: amount, scriptPubKey: to }, ...(sum - amount - fee > 0 ? [{ value: sum - amount - fee, scriptPubKey: spk }] : [])], lockTime: 0, witness: [] };
-  if (fee == null) { // 65-byte key-path witnesses; the outputs are already laid out, so the size is known
-    const sized = { ...tx, witness: tx.inputs.map(() => ['00'.repeat(65)]) }; const vsize = Math.ceil(engine.k.codec.txWeight(sized) / 4); fee = Math.ceil(vsize * rate);
-    const change = sum - amount - fee; tx.outputs = [{ value: amount, scriptPubKey: to }, ...(change > 0 ? [{ value: change, scriptPubKey: spk }] : [])]; if (change < 0) throw new Error(`insufficient coins for amount ${amount} plus fee ${fee}`);
-  }
-  const prevouts = picked.map((c) => ({ value: c.value, scriptPubKey: spk }));
-  const { SIGHASH_UNIFIED } = await import(`${process.env.SCHEMA ?? homedir() + '/bitcoin-desktop/schema'}/codec/interpreter.js`);
-  tx.witness = tx.inputs.map((_, i) => { const ht = 0x01 | SIGHASH_UNIFIED; let m = engine.k.interpreter.sighashUnified(tx, i, prevouts, ht, 2); if (typeof m === 'string') m = engine.hash.hexToBytes(m); return [engine.hash.bytesToHex(signer.schnorrSign(m, key)) + ht.toString(16).padStart(2, '0')]; });
-  const hex = engine.k.codec.encodeHex('Transaction', tx);
-  if (args.relay) { // as a kind 23500 event from a throwaway key: the transaction authorises itself
-    const relays = String(args.relay).split(',').map((x) => x.trim()).filter(Boolean);
-    const ev = makeEvents({ signer, hash: engine.hash }).txEvent(signer.randomKey(), chain.id, hex);
-    const res = await publish({ relays, event: ev });
-    console.log(JSON.stringify({ event: ev.id, kind: TX_KIND, relays: res, inputs: picked.length, amount, fee }, null, 1)); process.exit(0);
-  }
-  const r = await (await fetch(`${base}/tx`, { method: 'POST', body: hex })).json();
-  console.log(JSON.stringify({ ...r, inputs: picked.length, amount, fee }, null, 1)); process.exit(0);
+  // spend this key's mature coins as the producer reports them; the fee from size unless --fee
+  const key = await loadKey(keyPath, { signer }); const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const b = await buildSpend({ engine, chain, signer, key, url: args.url ?? 'http://127.0.0.1:3450', to: args.to, amount: args.amount, fee: args.fee != null ? Number(args.fee) : null });
+  if (b.note) console.error(`note: ${b.note}`);
+  const d = await deliver({ engine, chain, signer, hex: b.hex, relays, url: args.url ?? 'http://127.0.0.1:3450' });
+  console.log(JSON.stringify({ txid: b.txid, ...d, inputs: b.inputs, amount: b.amount, fee: b.fee, vsize: b.vsize }, null, 1)); process.exit(d.error ? 1 : 0);
 }
-if (!['key', 'genesis', 'produce', 'sync', 'send'].includes(cmd)) { console.error('siding key|genesis|produce|sync|send'); process.exit(2); }
+if (cmd === 'faucet') {
+  // SPEC 11: a kind 23501 event asks for coins at the address in its content; pay it from this key,
+  // once per address per --per-address-hours, at most --per-hour payouts an hour. State on disk.
+  const key = await loadKey(keyPath, { signer }); const me = signer.pubkeyOf(key); const url = args.url ?? 'http://127.0.0.1:3450';
+  const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean); if (!relays.length) throw new Error('--relay is needed: the faucet listens on relays');
+  const amount = Number(args.amount ?? 100000), perAddressMs = Number(args['per-address-hours'] ?? 24) * 3600e3, perHour = Number(args['per-hour'] ?? 20);
+  const stateFile = args.state ?? `${args.dir ?? `${homedir()}/.sidestr/${chain.name}`}/faucet.json`; let state = { paid: {}, recent: [] };
+  try { state = JSON.parse(await readFile(stateFile, 'utf8')); } catch {}
+  const save = () => writeFile(stateFile, JSON.stringify(state, null, 1));
+  log(`faucet for ${chain.id}: ${amount} sats per request, ${perHour}/h, one per address per ${perAddressMs / 3600e3} h; key ${me.slice(0, 12)}…, coins from ${url}`);
+  let busy = Promise.resolve();
+  subscribe({ relays, chainId: chain.id, kind: FAUCET_KIND, verify: engine.nostr.verifyNostrEvent, log, onEvent: (ev, from) => { busy = busy.then(async () => {
+    let dest; try { dest = resolveTo(String(ev.content ?? '').trim(), engine.k.params.bech32Hrp); } catch (e) { return log(`request ${ev.id.slice(0, 8)}… ignored: ${e.message}`); }
+    const now = Date.now(); state.recent = (state.recent ?? []).filter((t) => now - t < 3600e3);
+    const last = state.paid[dest.script]; if (last && now - last < perAddressMs) return log(`request ${ev.id.slice(0, 8)}… for ${dest.script.slice(0, 12)}… refused: paid ${Math.round((now - last) / 60e3)} min ago`);
+    if (state.recent.length >= perHour) return log(`request ${ev.id.slice(0, 8)}… refused: ${perHour} payouts already this hour`);
+    try {
+      const b = await buildSpend({ engine, chain, signer, key, url, to: dest.script, amount }); const d = await deliver({ engine, chain, signer, hex: b.hex, relays, url });
+      if (d.error) return log(`request ${ev.id.slice(0, 8)}…: could not deliver: ${d.error}`);
+      state.paid[dest.script] = now; state.recent.push(now); await save();
+      log(`paid ${amount} sats to ${dest.script.slice(0, 12)}… (${scriptToAddress(dest.script, engine.k.params.bech32Hrp)}) tx ${b.txid.slice(0, 16)}… via ${d.via}, request ${ev.id.slice(0, 8)}… from ${from}`);
+    } catch (e) { log(`request ${ev.id.slice(0, 8)}…: ${e.message}`); }
+  }).catch((e) => log(`faucet: ${e.message}`)); } });
+}
+if (!['key', 'genesis', 'produce', 'sync', 'send', 'faucet'].includes(cmd)) { console.error('siding key|genesis|produce|sync|send|faucet'); process.exit(2); }
