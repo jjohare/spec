@@ -1,0 +1,26 @@
+{
+ "id": "sidestr:txbt4-evm",
+ "name": "txbt4-evm",
+ "parent": "btc:testnet4-blake2b",
+ "comment": "An EVM beside the BLAKE2b testnet4: Ethereum transactions carried in sidestr transactions, run by every validator, the state root in each block; 1 sat = 1 gwei. One signer, ten-minute blocks. Coins with no value.",
+ "challenge": "51209a28eb554a6588b565fc4eb44c24d36968f914ce41717d27f336a366c40df21d",
+ "powLimit": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+ "addressPrefix": "ev",
+ "magic": "88c2fd86",
+ "pegConfirmations": 6,
+ "refundBlocks": 10000,
+ "pegoutBlocks": 144,
+ "pegoutMin": 10000,
+ "minFeeRate": 1,
+ "genesisTime": 1789762420,
+ "pegs": [],
+ "signer": "9a28eb554a6588b565fc4eb44c24d36968f914ce41717d27f336a366c40df21d",
+ "rules": [
+  "evm"
+ ],
+ "genesisHash": "08e543426e4b67411463496187118f73d973ec77998b19ed300785f652d4230d",
+ "evm": {
+  "chainId": 21474,
+  "gasLimit": 30000000
+ }
+}
