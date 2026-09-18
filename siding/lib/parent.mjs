@@ -31,10 +31,12 @@ export function parsePegMarker(spkHex, chainId) {
 
 // Peg-ins in the parent's blocks [from, to]: a transaction with our marker; its peg output is the
 // first taproot output that is not the marker. Amounts in sats.
-export async function scanPegins(parent, { chainId, from, to, onBlock = () => {} }) {
+export async function scanPegins(parent, { chainId, from, to, onBlock = () => {}, onCoinbase = null }) {
   const found = [];
   for (let h = from; h <= to; h++) {
     const block = await parent.rpc('getblock', [await parent.rpc('getblockhash', [h]), 2]); onBlock(h);
+    // the desk (SPEC 6.2) wants every taproot coinbase output: what a miner could pledge
+    if (onCoinbase && block.tx[0]?.vin?.[0]?.coinbase !== undefined) for (const o of block.tx[0].vout) if (o.scriptPubKey.type === 'witness_v1_taproot') onCoinbase({ txid: block.tx[0].txid, vout: o.n, value: Math.round(o.value * 1e8), script: o.scriptPubKey.hex, height: h });
     for (const tx of block.tx) {
       let script = null; for (const o of tx.vout) { const s = parsePegMarker(o.scriptPubKey.hex, chainId); if (s) { script = s; break; } }
       if (!script) continue;

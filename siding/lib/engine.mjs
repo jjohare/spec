@@ -8,6 +8,8 @@ import { rulesFor } from './overlays/index.mjs';
 export const SCHEMA = process.env.SCHEMA ?? `${homedir()}/bitcoin-desktop/schema`;
 export const BLAKETESTNODE = process.env.BLAKETESTNODE ?? `${homedir()}/remote/github.com/bitcoin-blake/blaketestnode`;
 
+export async function loadParentKernel(chain) { const { parentKernel } = await import('./pledge.mjs'); return parentKernel({ cdn: SCHEMA, parent: chain.parent, loadJson: async (u) => JSON.parse(await readFile(u, 'utf8')) }); }
+
 export async function loadEngine(chain) {
   const { createKernel } = await import(`${SCHEMA}/codec/kernel.js`);
   const { knotsBlake2b } = await import(`${SCHEMA}/codec/overlays/knots-blake2b.js`);

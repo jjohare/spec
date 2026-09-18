@@ -16,6 +16,8 @@
 //   siding produce ... --announce-mirror https://a/siding[,https://b/siding]  publish the tip (NIP-333, kind 33333, d = chain id)
 //       to the relays after every block, naming those mirrors; a client that knows only the chain id finds the chain
 //   siding produce ... --parent-wallet <name>  the parent wallet holding the peg outputs: every burn is paid from it (SPEC 7)
+//       with `pledge` in the document (SPEC 6.2): records every locked coinbase output as <dir>/coinbases.json, follows kind 33502
+//       pledges on the relays, pays the rate from the signer's coins, broadcasts each pledge at maturity, claims it to the float
 //   siding produce ... --parent-rpc http://host:port/ --parent-cookie FILE [--parent-from H] [--parent-poll 60]
 //       with a parent view (SPEC 6): scan the parent for this chain's peg-ins and claim each once it has
 //       pegConfirmations; scan state in <dir>/pegins.json
@@ -29,6 +31,8 @@ import { loadEngine } from '../lib/engine.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
 import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts } from '../lib/parent.mjs';
+import { verifyPledge, PLEDGE_KIND, maturityOf } from '../lib/pledge.mjs';
+import { loadParentKernel } from '../lib/engine.mjs';
 import { buildSpend, deliver, resolveTo } from '../lib/spend.mjs';
 import { FAUCET_KIND, makeEvents as mkEvents } from '../lib/relay.mjs';
 import { tipEvent, TIP_HEADERS } from '../lib/announce.mjs';
@@ -116,13 +120,19 @@ if (cmd === 'produce') {
   const parent = args['parent-rpc'] ? await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args['parent-wallet'] ?? null }) : null;
   const pegFile = `${dir}/pegins.json`; let pegState = { scanned: Number(args['parent-from'] ?? 0) - 1, pegins: [] };
   try { pegState = JSON.parse(await readFile(pegFile, 'utf8')); } catch {}
+  // SPEC 6.2: the desk
+  const desk = chain.pledge && parent ? { policy: chain.pledge, cbFile: `${dir}/coinbases.json`, plFile: `${dir}/pledges.json`, coinbases: [], pledges: {}, k: await loadParentKernel(chain) } : null;
+  if (desk) { try { desk.coinbases = JSON.parse(await readFile(desk.cbFile, 'utf8')).coinbases ?? []; } catch {} try { desk.pledges = JSON.parse(await readFile(desk.plFile, 'utf8')).pledges ?? {}; } catch {} }
+  const saveDesk = async () => { if (!desk) return; await writeFile(desk.cbFile, JSON.stringify({ chain: chain.id, lockedFrom: desk.policy.lockedFrom, maturity: desk.policy.maturity, updated: Math.floor(Date.now() / 1000), coinbases: desk.coinbases })); await writeFile(desk.plFile, JSON.stringify({ chain: chain.id, rate: desk.policy.rate, pledges: desk.pledges }, null, 1)); };
+  const pledgedByPayTxid = () => new Map(Object.values(desk?.pledges ?? {}).map((p) => [p.payTxid, p]));
   const savePegs = () => writeFile(pegFile, JSON.stringify(pegState, null, 1)); let scanning = false;
   const pegTick = async () => {
     if (!parent || scanning) return; scanning = true;
     try {
       const tip = await parent.height();
       if (tip > pegState.scanned) {
-        const found = await scanPegins(parent, { chainId: chain.id, from: pegState.scanned + 1, to: tip });
+        const found = await scanPegins(parent, { chainId: chain.id, from: pegState.scanned + 1, to: tip, onCoinbase: desk ? (c) => { if (c.height >= desk.policy.lockedFrom && !desk.coinbases.some((x) => x.txid === c.txid && x.vout === c.vout)) desk.coinbases.push(c); } : null });
+        if (desk) await saveDesk();
         for (const p of found) if (!pegState.pegins.some((q) => q.txid === p.txid && q.vout === p.vout)) { pegState.pegins.push(p); log(`peg-in ${p.txid.slice(0, 16)}…:${p.vout}: ${p.amount} sats to ${p.script.slice(0, 12)}…, parent h${p.height}`); }
         pegState.scanned = tip; await savePegs();
       }
@@ -130,12 +140,36 @@ if (cmd === 'produce') {
       for (const p of pegState.pegins) {
         if (p.refused || s.claimed(p.txid, p.vout)) continue;
         const st = await pegStatus(parent, p); if (!st.unspent) { p.refused = 'spent on the parent'; log(`peg-in ${p.txid.slice(0, 16)}…:${p.vout} is spent on the parent; not claimable`); continue; }
-        if (st.confirmations >= need) claims.push({ txid: p.txid, vout: p.vout, amount: p.amount, script: p.script });
+        // a pledged reward arriving at maturity was paid for already: it is claimed to the float, not to the marker's payee
+        const pledged = desk ? pledgedByPayTxid().get(p.txid) : null;
+        if (st.confirmations >= need) claims.push({ txid: p.txid, vout: p.vout, amount: p.amount, script: pledged ? chain.challenge : p.script });
       }
       if (claims.length) { const r = s.produce(key, { claims }); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
     } catch (e) { log(`parent: ${e.message}`); } finally { scanning = false; }
   };
   if (parent) { log(`parent ${args['parent-rpc']}: peg-ins for ${chain.id} from h${pegState.scanned + 1}, claim at ${chain.pegConfirmations ?? 6} confirmations`); setInterval(pegTick, Number(args['parent-poll'] ?? 60) * 1000); pegTick(); }
+  // the desk: pledges arrive as kind 33502 events (content: the pre-signed maturity transaction, d = outpoint)
+  if (desk) {
+    log(`desk: ${(desk.policy.rate * 100).toFixed(0)}% now for rewards locked from ${desk.policy.lockedFrom} until ${desk.policy.maturity}; ${Object.keys(desk.pledges).length} pledge(s) so far, ${desk.coinbases.length} locked coinbase output(s) known`);
+    let pledging = Promise.resolve();
+    const onPledge = (ev, url) => { pledging = pledging.then(async () => {
+      const d = ev.tags.find((t) => t[0] === 'd')?.[1] ?? ''; const [ptxid, pvout] = d.split(':'); if (!/^[0-9a-f]{64}$/.test(ptxid ?? '') || !/^\d+$/.test(pvout ?? '')) return;
+      if (desk.pledges[d]) return; // one payment per reward, ever
+      const o = await parent.rpc('gettxout', [ptxid, Number(pvout), true]); const tip = await parent.height();
+      const prevout = o ? { value: Math.round(o.value * 1e8), script: o.scriptPubKey.hex, coinbase: !!o.coinbase, height: tip - o.confirmations + 1 } : null;
+      const v = verifyPledge({ k: desk.k, hex: String(ev.content ?? '').trim(), chain, prevout, parentTip: tip });
+      if (!v.ok) return log(`pledge ${d.slice(0, 16)}… from ${url}: refused, ${v.error}`);
+      const spendable = s.coins(chain.challenge).filter((c) => !c.coinbase || s.height() + 1 - c.height >= s.k.params.coinbaseMaturity).reduce((a, c) => a + c.value, 0);
+      if (v.pays + 2000 > spendable) return log(`pledge ${d.slice(0, 16)}…: the float has ${spendable} sats, ${v.pays} needed; not paid (try later)`);
+      const b = await buildSpend({ engine, chain, signer, key, url: `http://127.0.0.1:${args.port ?? 3450}`, to: v.payee, amount: v.pays }); const r = s.submit(b.hex);
+      desk.pledges[d] = { txid: ptxid, vout: Number(pvout), amount: v.amount, payee: v.payee, paid: v.pays, paidTxid: r.txid, payTxid: v.txid, hex: String(ev.content).trim(), maturity: v.maturity, at: Math.floor(Date.now() / 1000), event: ev.id, broadcast: null };
+      await saveDesk(); log(`pledge ${d.slice(0, 16)}…: ${v.amount} sats locked until ${v.maturity}; paid ${v.pays} sats to ${v.payee.slice(0, 12)}… in ${r.txid.slice(0, 16)}…`);
+    }).catch((e) => log(`pledge: ${e.message}`)); };
+    subscribe({ relays, chainId: chain.id, verify: engine.nostr.verifyNostrEvent, log, onEvent: onPledge, kind: PLEDGE_KIND, since: 30 * 86400 });
+    // at maturity, every pledge is broadcast; the scanner then sees it as a peg-in and claims it to the float
+    const matureTick = async () => { try { const tip = await parent.height(); for (const [d, p] of Object.entries(desk.pledges)) { if (p.broadcast || tip < p.maturity) continue; try { const txid = await parent.rpc('sendrawtransaction', [p.hex]); p.broadcast = { txid, at: Math.floor(Date.now() / 1000) }; log(`pledge ${d.slice(0, 16)}… matured: broadcast ${txid.slice(0, 16)}…`); } catch (e) { p.broadcastError = e.message; log(`pledge ${d.slice(0, 16)}… matured but could not broadcast: ${e.message}`); } } await saveDesk(); } catch (e) { log(`desk: ${e.message}`); } };
+    setInterval(matureTick, 600000); setTimeout(matureTick, 20000);
+  }
   // SPEC 7: every burn the chain validated is paid on the parent from the peg wallet, once. The
   // record is <dir>/pegouts.json, reconciled on start with the wallet's own history so a crash
   // between paying and recording cannot pay twice.
@@ -162,7 +196,9 @@ if (cmd === 'produce') {
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     if (path === '/pegouts.json') return json(200, outState);
-    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, announce: mirrors.length ? { mirrors, announced } : null, pegouts: { burned: s.pegouts().length, paid: Object.keys(outState.paid).length, min: s.pegoutMin(), payer: parent?.wallet ?? null }, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
+    if (desk && path === '/coinbases.json') return json(200, { chain: chain.id, lockedFrom: desk.policy.lockedFrom, maturity: desk.policy.maturity, coinbases: desk.coinbases });
+    if (desk && path === '/pledges.json') return json(200, { chain: chain.id, rate: desk.policy.rate, pledges: desk.pledges });
+    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, announce: mirrors.length ? { mirrors, announced } : null, pegouts: { burned: s.pegouts().length, paid: Object.keys(outState.paid).length, min: s.pegoutMin(), payer: parent?.wallet ?? null }, desk: desk ? { rate: desk.policy.rate, maturity: desk.policy.maturity, coinbases: desk.coinbases.length, pledges: Object.keys(desk.pledges).length, paid: Object.values(desk.pledges).reduce((a, p) => a + p.paid, 0) } : null, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
     if (path === '/chain.json') return json(200, { ...chain, genesisHash: s.genesisHash });
     if (path === '/tip') return json(200, s.tip());
     if (path === '/blocks.json') return json(200, s.index);
