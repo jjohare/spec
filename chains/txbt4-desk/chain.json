@@ -22,7 +22,7 @@
   "maturity": 158111,
   "pegAddress": "tb1ptk52cdmxkx6kulullgmwkgy0d5kv65m0s03c5r865ksxh8hfh4hqs4y7cj",
   "pegScript": "51205da8ac3766b1b56e7f9ffa36eb208f6d2ccd536f83e38a0cfaa5a06b9ee9bd6e",
-  "maxPerPledge": 5000000000,
+  "maxPerPledge": 5100000000,
   "fee": 1000
  }
 }
