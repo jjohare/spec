@@ -18,5 +18,6 @@ export async function loadEngine(chain) {
   const sidestr = sidestrOverlay(chain, { hash, secp }); const rules = rulesFor(chain); const overlays = [knotsBlake2b(await load('schema/overlays/knots-blake2b.jsonld')), sidestr, ...rules.overlays];
   const k = createKernel({ core: await load('schema/core.jsonld'), proof: await load('schema/proof.jsonld'), script: await load('schema/script.jsonld'),
     chain: await load('schema/chain.jsonld'), validate: await load('schema/validate.jsonld'), network: chain.id, overlays });
+  if (rules.evm) await rules.evm.init(); // ethereumjs loads lazily; a chain without the rule never pays for it
   return { k, pow, hash, secp, nostr, sidestr, rules };
 }

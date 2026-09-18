@@ -20,7 +20,7 @@ export function makeRound({ engine, s, chain, fed, key, pub, relays, events, pub
   const entitled = (signer, height, at) => { const slot = fed.signers.indexOf(signer); if (slot < 0) return false; const turn = height % n; const base = dueSince ?? at; const late = Math.max(0, Math.floor((at - base) / 1000 / proposeAfter)); return ((slot - turn + n) % n) <= late; }; // never negative: another signer's clock may run a little ahead of mine
   const send = async (ev) => { const r = await publish({ relays, event: ev }); return Object.values(r).filter((x) => x === 'ok').length; };
   async function propose(opts = {}) {
-    const { block, fees, claims } = s.buildNext({ ...opts, claims: opts.claims ?? claimsWanted }); const height = block.header.height; const hex = engine.k.codec.encodeHex('Block', block);
+    const { block, fees, claims } = await s.buildNext({ ...opts, claims: opts.claims ?? claimsWanted }); const height = block.header.height; const hex = engine.k.codec.encodeHex('Block', block);
     const ev = events.signEvent(key, { kind: PROPOSAL_KIND, tags: [['chain', chain.id], ['h', String(height)]], content: hex });
     pending = { id: ev.id, height, block, sigs: new Map([[pub, partialSignature(E, block, fed, key)]]), at: Date.now(), fees, claims };
     signed.set(height, { id: ev.id, at: Date.now() });
@@ -36,7 +36,7 @@ export function makeRound({ engine, s, chain, fed, key, pub, relays, events, pub
     let block; try { block = engine.k.codec.decode('Block', ev.content); } catch { return log('round: proposal is not a block'); }
     const tip = s.tip(); if (block.header.prevBlockHash !== tip.hash || block.header.time <= tip.time) return log(`round: proposal h${height} refused: does not build on my tip`);
     // every transaction must be one my mempool accepts (or already holds): the same checks a producer makes
-    for (const tx of block.transactions.slice(1)) { const txid = engine.k.codec.txid(tx); if (s.mempool.has(txid)) continue; try { s.submit(engine.k.codec.encodeHex('Transaction', tx)); } catch (e) { return log(`round: proposal h${height} refused: tx ${txid.slice(0, 12)}… ${e.message}`); } }
+    for (const tx of block.transactions.slice(1)) { const txid = engine.k.codec.txid(tx); if (s.mempool.has(txid)) continue; try { await s.submit(engine.k.codec.encodeHex('Transaction', tx)); } catch (e) { return log(`round: proposal h${height} refused: tx ${txid.slice(0, 12)}… ${e.message}`); } }
     if (checkClaims) { const why = await checkClaims(block); if (why) return log(`round: proposal h${height} refused: ${why}`); }
     const sig = partialSignature(E, block, fed, key); signed.set(height, { id: ev.id, at: Date.now() });
     const pev = events.signEvent(key, { kind: PARTIAL_KIND, tags: [['chain', chain.id], ['h', String(height)], ['e', ev.id]], content: sig });
@@ -51,13 +51,13 @@ export function makeRound({ engine, s, chain, fed, key, pub, relays, events, pub
   async function maybeSeal() {
     if (!pending || pending.sigs.size < fed.threshold) return;
     const sealed = sealFederated(E, pending.block, fed, pending.sigs); const p = pending; pending = null;
-    try { const r = s.addSealed(sealed); lastBlockAt = Date.now(); lastHeightSeen = r.height; claimsWanted = []; dueSince = null; log(`block ${r.height} ${r.hash.slice(0, 16)}… sealed by ${fed.threshold} of ${n}, ${r.txs - 1} txs, fees ${p.fees}${p.claims ? `, claims ${p.claims}` : ''}`);
+    try { const r = await s.addSealed(sealed); lastBlockAt = Date.now(); lastHeightSeen = r.height; claimsWanted = []; dueSince = null; log(`block ${r.height} ${r.hash.slice(0, 16)}… sealed by ${fed.threshold} of ${n}, ${r.txs - 1} txs, fees ${p.fees}${p.claims ? `, claims ${p.claims}` : ''}`);
       const ev = events.signEvent(key, { kind: SEALED_KIND, tags: [['chain', chain.id], ['h', String(r.height)]], content: engine.k.codec.encodeHex('Block', sealed) }); await send(ev); onBlock(r);
     } catch (e) { log(`round: sealed block refused by my own validator: ${e.message}`); }
   }
   async function onSealed(ev) {
     const height = Number(tag(ev, 'h')); if (ev.pubkey === pub || !fed.signers.includes(ev.pubkey) || height !== s.height() + 1) return;
-    try { const r = s.addSealed(engine.k.codec.decode('Block', ev.content)); lastBlockAt = Date.now(); lastHeightSeen = r.height; dueSince = null; if (pending && pending.height <= r.height) pending = null; log(`block ${r.height} ${r.hash.slice(0, 16)}… from ${ev.pubkey.slice(0, 8)}… (sealed by the federation)`); onBlock(r); }
+    try { const r = await s.addSealed(engine.k.codec.decode('Block', ev.content)); lastBlockAt = Date.now(); lastHeightSeen = r.height; dueSince = null; if (pending && pending.height <= r.height) pending = null; log(`block ${r.height} ${r.hash.slice(0, 16)}… from ${ev.pubkey.slice(0, 8)}… (sealed by the federation)`); onBlock(r); }
     catch (e) { log(`round: sealed block h${height} from ${ev.pubkey.slice(0, 8)}… refused: ${e.message}`); }
   }
   const subs = [PROPOSAL_KIND, PARTIAL_KIND, SEALED_KIND].map((kind) => subscribe({ relays, chainId: chain.id, verify: engine.nostr.verifyNostrEvent, log: () => {}, kind, since: 600, onEvent: (ev) => (kind === PROPOSAL_KIND ? onProposal(ev) : kind === PARTIAL_KIND ? onPartial(ev) : onSealed(ev)).catch((e) => log(`round: ${e.message}`)) }));

@@ -40,9 +40,16 @@ export class Siding {
       appendBlock(this.dat, index, 0, hash, Buffer.from(hex, 'hex')); writeIndex(this.idx, index);
       this.log(`genesis ${hash} written: ${g.transactions[0].outputs.length - 1} pegs, ${this.chain.pegs.reduce((s, p) => s + p.amount, 0)} sats`);
     }
-    for (const e of index.blocks) this.#apply(e.height, readBlock(this.dat, e).toString('hex'), e.hash);
+    for (const e of index.blocks) await this.#applyAsync(e.height, readBlock(this.dat, e).toString('hex'), e.hash);
     this.index = index;
     return this;
+  }
+  get evm() { return this.engine.rules?.evm ?? null; }
+  // the EVM executes before the kernel's checks (proposals/evm.md): its verdict is what the sync rule reads
+  async #applyAsync(h, hex, expectHash) {
+    if (this.evm && h > 0) { const block = this.k.codec.decode('Block', hex); const v = await this.evm.prepare(block, h, this.k.codec); if (!v.ok) throw new Error(`block ${h} failed: sidestr:rule-evm (${v.error})`); }
+    else if (this.evm && h === 0) { const g = this.k.codec.decode('Block', hex); this.evm.roots.set(0, this.evm.roots.get(-1)); this.evm.blocks.set(0, { hashes: [], root: '0x' + this.evm.roots.get(-1) }); }
+    return this.#apply(h, hex, expectHash);
   }
   #apply(h, hex, expectHash) {
     if (h === 0) {
@@ -59,14 +66,14 @@ export class Siding {
   tip() { const h = this.node.height; return { height: h, hash: this.node.chain[h], time: this.node.headers[h].time }; }
   height() { return this.node.height; }
   // accept a block from elsewhere (a mirror): validated by the node, then written
-  addBlock(hex, expectHash = null) {
+  async addBlock(hex, expectHash = null) {
     const block = this.k.codec.decode('Block', hex); const h = block.header.height;
-    const r = this.#apply(h, hex, expectHash);
+    const r = await this.#applyAsync(h, hex, expectHash);
     appendBlock(this.dat, this.index, h, r.hash, Buffer.from(hex, 'hex')); writeIndex(this.idx, this.index);
     return { height: h, hash: r.hash, txs: block.transactions.length };
   }
   // SPEC 11: a transaction reaches the producer; it is included when it validates
-  submit(hex) {
+  async submit(hex) {
     const { k } = this; const tx = k.codec.decode('Transaction', hex); const txid = k.codec.txid(tx);
     if (this.mempool.has(txid)) return { txid, dup: true };
     const s = k.blocks.validateTransaction(tx, false); if (!s.ok) throw new Error(`transaction: ${s.results.filter((r) => r.ok === false).map((r) => r.rule).join(', ')}`);
@@ -82,6 +89,7 @@ export class Siding {
     tx.inputs.forEach((_, i) => { const v = k.interpreter.verifyInput(tx, i, prevouts[i], prevouts, null, { unifiedSighash: true }); if (v.ok !== true) throw new Error(`input ${i}: ${v.error ?? v.reason ?? 'script failed'}`); });
     // SPEC 12: the chain's extra rules, against the confirmed state (block order decides conflicts between mempool transactions)
     const rv = this.rulesCheck(tx, txid); if (!rv.ok) throw new Error(`${rv.rule}: ${rv.error}`);
+    if (this.evm) { const ev = await this.evm.checkTx(tx, txid, { height: this.height() + 1 }); if (!ev.ok) throw new Error(`evm: ${ev.error}`); }
     this.mempool.set(txid, tx); for (const i of tx.inputs) this.mempoolSpent.add(keyOf(i.prevout));
     return { txid, fee: inSum - outSum, vsize };
   }
@@ -95,7 +103,15 @@ export class Siding {
     return { ok: true };
   }
   // the mempool in order, each transaction checked against the state the ones before it leave; the losers are evicted
-  sequenced() {
+  // the mempool in order, with the EVM run over it: returns the transactions, and for an evm chain the
+  // state root they leave and the withdrawals the coinbase must pay; the EVM state is reverted after
+  async sequencedEvm(height, time) {
+    const txs = await this.sequenced(); if (!this.evm) return { txs, root: null, withdrawals: [], hashes: [] };
+    await this.evm.begin(); const kept = [], withdrawals = [], hashes = [];
+    for (const tx of txs) { const txid = this.k.codec.txid(tx); const r = await this.evm.checkTx(tx, txid, { height, time, keep: true }); if (r.ok) { kept.push(tx); withdrawals.push(...r.withdrawals); hashes.push(...r.hashes); } else { this.log(`mempool: ${txid.slice(0, 16)}… dropped, evm: ${r.error}`); this.mempool.delete(txid); for (const i of tx.inputs) this.mempoolSpent.delete(keyOf(i.prevout)); } }
+    const root = await this.evm.end(hashes); return { txs: kept, root, withdrawals, hashes };
+  }
+  async sequenced() {
     const r = this.engine.rules; const txs = [...this.mempool.entries()]; if (!r?.assets) return txs.map(([, tx]) => tx);
     const view = new r.assets.CarryView(r.assets.carried); const saved = r.pool ? new Map([...r.pool.pools].map(([k, v]) => [k, { ...v }])) : null; const savedBy = r.pool ? new Map(r.pool.byOutpoint) : null; const out = [];
     for (const [txid, tx] of txs) { const log = []; const v = this.rulesCheck(tx, txid, view, log); if (v.ok) { out.push(tx); for (const e of log) r.pool.apply(e, null, null); } else { this.log(`mempool: ${txid.slice(0, 16)}… dropped, ${v.rule}: ${v.error}`); this.mempool.delete(txid); for (const i of tx.inputs) this.mempoolSpent.delete(keyOf(i.prevout)); } }
@@ -111,19 +127,21 @@ export class Siding {
   // SPEC 6: a claim pays the peg's amount to the script the peg-in named, followed by its marker
   claimed(txid, vout) { return this.engine.sidestr?.claims.has(outpointOf(txid, vout)) ?? false; }
   // the next block, unsigned: the mempool in order, fees to the challenge, the claims (SPEC 4, 6)
-  buildNext({ time = Math.floor(Date.now() / 1000), claims = [] } = {}) {
+  async buildNext({ time = Math.floor(Date.now() / 1000), claims = [] } = {}) {
     const tip = this.tip(); const t = Math.max(time, tip.time + 1);
-    const txs = this.sequenced(); const fees = txs.reduce((s, tx) => s + this.fees(tx), 0);
+    const { txs, root, withdrawals } = await this.sequencedEvm(tip.height + 1, t); const fees = txs.reduce((s, tx) => s + this.fees(tx), 0);
     const outputs = fees > 0 ? [{ value: fees, scriptPubKey: this.chain.challenge }] : [];
+    for (const w of withdrawals) outputs.push({ value: w.sats, scriptPubKey: w.script }); // evm withdrawals, paid by rule
+    if (root) { const { rootScript } = await import('./overlays/evm.mjs'); outputs.push({ value: 0, scriptPubKey: rootScript(root) }); }
     for (const c of claims) { if (this.claimed(c.txid, c.vout)) throw new Error(`${c.txid}:${c.vout} is already claimed`); outputs.push({ value: c.amount, scriptPubKey: c.script }, { value: 0, scriptPubKey: claimMarker(c.txid, c.vout) }); }
     return { block: buildBlock(this.engine, { height: tip.height + 1, prev: tip.hash, time: t, transactions: txs, outputs, bits: this.bits }), fees, claims: claims.length };
   }
   // one signer: build, sign, add
-  produce(privHex, opts = {}) {
+  async produce(privHex, opts = {}) {
     if (this.federation) throw new Error('a federated chain makes blocks through the round (proposals/level-2.md), not produce()');
-    const { block, fees, claims } = this.buildNext(opts);
+    const { block, fees, claims } = await this.buildNext(opts);
     const signed = signBlock({ ...this.engine, interpreter: this.k.interpreter, schnorrSign: this.signer.schnorrSign }, block, this.chain.challenge, privHex);
-    const r = this.addBlock(this.k.codec.encodeHex('Block', signed));
+    const r = await this.addBlock(this.k.codec.encodeHex('Block', signed));
     return { ...r, fees, claims };
   }
   // a sealed block (any path) added

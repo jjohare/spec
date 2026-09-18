@@ -137,8 +137,8 @@ if (cmd === 'produce') {
     } finally { announcing = false; }
   };
   if (mirrors.length) { setInterval(() => announce().catch((e) => log(`announce: ${e.message}`)), 3000); }
-  if (relays.length) subscribe({ relays, chainId: chain.id, verify: engine.nostr.verifyNostrEvent, log, onEvent: (ev, url) => {
-    try { const r = s.submit(String(ev.content).trim()); log(`tx ${r.txid.slice(0, 16)}… from ${url} (event ${ev.id.slice(0, 8)}…) accepted, fee ${r.fee}`); }
+  if (relays.length) subscribe({ relays, chainId: chain.id, verify: engine.nostr.verifyNostrEvent, log, onEvent: async (ev, url) => {
+    try { const r = await s.submit(String(ev.content).trim()); log(`tx ${r.txid.slice(0, 16)}… from ${url} (event ${ev.id.slice(0, 8)}…) accepted, fee ${r.fee}`); }
     catch (e) { log(`${url}: event ${ev.id.slice(0, 8)}… refused: ${e.message}`); }
   } });
   log(`${chain.id}: height ${s.height()} tip ${s.tip().hash.slice(0, 16)}…, ${s.utxo.size} coins`);
@@ -151,7 +151,8 @@ if (cmd === 'produce') {
   const parentRef = { parent: null };
   const round = fed ? makeRound({ engine: { ...engine, signer }, s, chain, fed, key, pub, relays: String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean), events: mkEvents({ signer, hash: engine.hash }), publish, subscribe, log, proposeAfter: Number(args['propose-after'] ?? 30), onBlock: () => { last = Date.now(); }, checkClaims }) : null;
   if (fed) log(`level 2: signer ${fed.signers.indexOf(pub) + 1} of ${fed.signers.length}, threshold ${fed.threshold}, proposing after ${Number(args['propose-after'] ?? 30)} s when it is another signer's turn`);
-  const tick = () => { const due = Date.now() - last >= (s.mempool.size ? txInterval : interval); if (fed) { round.tick({ due }).catch((e) => log(`round: ${e.message}`)); return; } if (!due) return; try { const r = s.produce(key); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… ${r.txs - 1} txs, fees ${r.fees}`); } catch (e) { log(`produce: ${e.message}`); } };
+  const tick = () => { const due = Date.now() - last >= (s.mempool.size ? txInterval : interval); if (fed) { round.tick({ due }).catch((e) => log(`round: ${e.message}`)); return; } if (!due || producing) return; producing = true; s.produce(key).then((r) => { last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… ${r.txs - 1} txs, fees ${r.fees}`); }).catch((e) => log(`produce: ${e.message}`)).finally(() => { producing = false; }); };
+  let producing = false;
   setInterval(tick, 1000);
   // SPEC 6: with a parent view, claim confirmed peg-ins. Which outpoints are already claimed is
   // derived from the chain itself on open; only the scan position and what was found persist.
@@ -185,7 +186,7 @@ if (cmd === 'produce') {
         if (st.confirmations >= need) claims.push({ txid: p.txid, vout: p.vout, amount: p.amount, script: pledged ? chain.challenge : p.script });
       }
       if (claims.length && fed) round.wantClaims(claims);
-      else if (claims.length) { const r = s.produce(key, { claims }); last = Date.now(); await lockOutputs(parent, claims, false); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
+      else if (claims.length) { const r = await s.produce(key, { claims }); last = Date.now(); await lockOutputs(parent, claims, false); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
     } catch (e) { log(`parent: ${e.message}`); } finally { scanning = false; }
   };
   if (parent) { log(`parent ${args['parent-rpc']}: peg-ins for ${chain.id} from h${pegState.scanned + 1}, claim at ${chain.pegConfirmations ?? 6} confirmations`); setInterval(pegTick, Number(args['parent-poll'] ?? 60) * 1000); pegTick(); }
@@ -288,7 +289,7 @@ if (cmd === 'sync') {
   for (const e of index.blocks) {
     if (e.height <= s.height()) { if (s.node.chain[e.height] !== e.hash) throw new Error(`disagree at ${e.height}: ours ${s.node.chain[e.height]} theirs ${e.hash}`); continue; }
     const bytes = new Uint8Array(await (await fetch(`${base}/blocks.dat`, { headers: { range: `bytes=${e.offset + 8}-${e.offset + 8 + e.size - 1}` } })).arrayBuffer());
-    s.addBlock(Buffer.from(bytes).toString('hex'), e.hash); n++;
+    await s.addBlock(Buffer.from(bytes).toString('hex'), e.hash); n++;
   }
   console.log(JSON.stringify({ synced: n, height: s.height(), tip: s.tip().hash, coins: s.utxo.size, agree: true }, null, 1)); process.exit(0);
 }
