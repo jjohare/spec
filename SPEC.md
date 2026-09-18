@@ -138,31 +138,10 @@ The refund path means a peg-in that is never claimed, or a chain that dies, retu
 to the pegger after the timelock. While the parent chain is stalled the timelock does not
 tick; the coins stay pegged.
 
-### 6.2 The desk: pledging a locked reward
+### 6.2 The desk
 
-Draft, level 1. A parent may lock coinbase rewards for a long time (the BLAKE2b chains do,
-from `lockedFrom` until `maturity`). A miner who holds such a reward can still sign, today, the
-transaction that will move it: a **pledge** is a transaction spending the reward to the chain's
-peg address, carrying the peg-in marker of section 6 naming the miner's sidechain script, with
-`nLockTime` = the reward's maturity height and a non-final sequence. It is invalid until that
-height and valid from it. The miner publishes it as a kind 33502 event, `d` = the reward's
-outpoint, content the transaction hex.
-
-A chain that runs a desk says so in its document: `pledge` with `rate`, `lockedFrom`,
-`maturity`, `pegScript`, `fee` and `maxPerPledge`. Its producer, with a parent view, checks a
-pledge (the output exists, is a coinbase from the locked era, is unspent and immature; one
-input, two outputs; output 0 pays the peg less a small fee; output 1 is the marker; the lock
-time is the maturity; the signature verifies against the reward) and pays `floor(amount ×
-rate)` sats from the signer's coins to the marker's script, once per reward, recording it in
-`pledges.json` beside the block file. At maturity the producer broadcasts every pledge it holds;
-each confirms as an ordinary peg-in and is claimed to the float (the signer's script), not to
-the marker's payee, because the payee was paid already. The marker binds the payee inside the
-signed transaction, so a pledge seen on a relay cannot be redirected.
-
-What the miner keeps is the key: at maturity they could spend the reward themselves before the
-desk's broadcast lands. A pledge is a commitment, not a covenant, and the desk's rate prices
-that, the duration, and the chance of a reorg past maturity. The producer publishes the locked
-coinbase outputs it has seen (`coinbases.json`) so a wallet can list what a key may pledge.
+A chain may pay now for a coinbase reward locked on the parent, against the miner's
+pre-signed maturity transaction. Proposal: [proposals/desk.md](proposals/desk.md).
 
 ## 7. Peg-out
 
@@ -203,58 +182,10 @@ would on any chain, and the block signatures do not settle it.
 
 The first chain is level 1 with one signer. Section 10 says so.
 
-### 9.1 Level 2: several signers
+### 9.1 Level 2
 
-Draft. A level 2 chain has `n` signers and a threshold `k`. Nothing changes for a validator:
-the challenge is still a script and a block is still valid when its solution satisfies it.
-
-**Challenge.** A taproot output whose internal key is provably unspendable (the BIP 341 NUMS
-point tweaked by the chain id) and whose single leaf is `multi_a(k, pk_1, …, pk_n)`:
-`<pk_1> CHECKSIG <pk_2> CHECKSIGADD … <pk_n> CHECKSIGADD <k> NUMEQUAL`. The document lists
-`signers` (the `pk_i`, in leaf order) and `threshold`, and `challenge` is derived from them,
-so a validator can check the derivation. The solution is the script-path witness: `n`
-signature slots in leaf order, an empty item for a signer who did not sign, then the leaf
-script and the control block; it is carried as one push of any length after the witness
-commitment (section 4), `OP_PUSHDATA1` or `OP_PUSHDATA2` as its size needs.
-
-**Signer keys are Nostr keys.** A signer's `pk_i` is the key it publishes events with, so a
-proposal or a partial signature is authenticated by the event itself and no second identity
-is needed.
-
-**The round.** Every signer runs a producer: the same validator, the same mempool, its own
-mirror. At each height the proposer is signer `height mod n`; after `proposeAfter` seconds
-without a block, the next signer in order may propose, and so on around the ring.
-
-1. The proposer builds the block without its solution and publishes it as a kind 23510 event:
-   content the block hex, tags `chain` = chain id, `h` = height. It signs the block data itself
-   and includes its own partial signature as a kind 23511 event referencing the proposal.
-2. Each other signer validates the proposal against its own chain and rules exactly as it
-   would a block from the mirror, requires that every transaction is one it has seen valid,
-   that the height is its tip plus one, that the proposer is entitled at this time, and that it
-   has not signed another proposal for this height. If all hold it publishes a kind 23511
-   event: content its BIP 340 signature over the block data (section 4, the same message the
-   level 1 signature covers), tags `chain`, `h`, `e` = the proposal event id.
-3. With `k` signatures the proposer assembles the witness in leaf order, appends the solution,
-   adds the block to its chain, and announces it (section 11). Every signer's producer adds
-   the announced block from any signer's mirror as a follower does, and the next round starts.
-
-A signer that signs two proposals for one height is faulty; the documents of a chain say what
-its signers do about that, and a validator sees both signatures on the relay. A block needs
-`k` of `n` signers online; with fewer the chain halts, heartbeats included, and every child's
-refund clock with it (section 3.1). Level 3 adds rotation and a recovery path.
-
-**Announcements.** Any signer may publish the kind 33333 tip event. A client that knows the
-document accepts an announcement from any listed signer and prefers the highest tip; the `u`
-tags name every signer's mirror.
-
-**The peg wallet.** The peg outputs on the parent are the same `k`-of-`n` under the same keys:
-a `tr(NUMS, multi_a(k, …))` descriptor. A peg-out (section 7) is a PSBT the proposer publishes
-as kind 23512 and the co-signers return signed as kind 23513, the same round with the same
-rule of one signature per burn per signer, finalized and broadcast by the proposer.
-
-**Changing the signers.** A new `signers`/`threshold` pair with its derived challenge is a
-rule document (section 8) with an activation height; the peg outputs move to the new
-descriptor by a peg-out to it, paid by the old set.
+How a chain gets `k` of `n` signers — the challenge, the co-signing round over the relay, the
+peg wallet. Proposal: [proposals/level-2.md](proposals/level-2.md).
 
 ## 10. The first chain: the txbt4 siding
 
@@ -294,111 +225,15 @@ anyone's: the transaction authorises itself. A producer includes what validates.
 nothing may publish a kind 23501 event, content an address, tagged the same way; a faucet that
 follows the relay may answer it with a payment, at its own limits.
 
-**Checkpoints.** An announcement says where the chain is; it carries no proof of work. A
-producer with a parent wallet may write its tip into the parent every `N` blocks: one
-`OP_RETURN` of `ckpt:<chain id>:` followed by the height as four little-endian bytes, `:`, and
-the 32-byte block hash (58 bytes for a 15-byte chain id). The parent block that carries it
-proves that the chain's history up to that block existed before it. The producer records each
-checkpoint beside the block file (`checkpoints.json`: height, hash, parent txid, parent block)
-and a mirror carries it; a validator checks each checkpointed hash against the block it
-validated at that height, shows every block at or below the newest confirmed checkpoint as
-anchored in the parent, and treats a mismatch as a rewritten history. A level 2 validator
-also checks that the parent transaction exists and is buried. Checkpoints bound what a
-signer can backdate; they do not order what happens between them. A wallet needs a mirror for blocks and a producer
-or relay for sending, and nothing else.
+**Checkpoints.** A producer may write its tip into the parent now and then, so the parent's
+proof of work bounds the chain's history. Proposal: [proposals/checkpoints.md](proposals/checkpoints.md).
 
-## 12. Assets and pools
+## 12. Assets
 
-Draft. Issued assets and an automated market maker between them and the pegged coin are two
-rules in the sense of section 8, `assets` and `pool`, that a chain document names in `rules`
-(`"rules": ["assets", "pool"]`). A validator applies a named rule from genesis, and a validator
-without the rule's code refuses the chain rather than validating half of it. An issued asset is
-unbacked: it is a number the chain keeps, and every document that names it says so.
-
-### 12.1 Records
-
-A rule reads **records**: `OP_RETURN` outputs whose data is UTF-8 text of at most 255 bytes
-(a single push, `OP_PUSHDATA1` when longer than 75). A transaction may carry several. The
-coinbase carries none of these. An amount is a whole number of units, `1` to `2^53 - 1`;
-sums are computed without overflow.
-
-| record | meaning |
-|---|---|
-| `issue:<TICKER>:<decimals>` | this transaction issues a new asset; its id is this txid; `TICKER` is 1 to 8 of `A-Z0-9`, `decimals` 0 to 8 (display only) |
-| `tally:<asset>:<vout>=<amount>[,<vout>=<amount>…]` | the named outputs of this transaction carry those amounts of the asset; `<asset>` is an asset id, or `self` in the issuing transaction |
-| `pool:<pool>:<vout>` | the named output is the pool coin of that pool; `<pool>` is a pool id, or `self` in the transaction that opens it |
-
-A tallied output is an ordinary coin: it has a script, an owner and a value in sats (at least
-one), and it is spent as any coin is. The asset amounts ride on it. An output is tallied at
-most once per asset, and an output not named in a tally carries nothing.
-
-### 12.2 The `assets` rule
-
-The validator keeps, beside the UTXO set, what each unspent output carries. For every asset
-in every non-coinbase transaction: **what the inputs carry is at least what the tallies
-assign**; the difference is destroyed. Issuance is the one exception: in a transaction with
-`issue:`, the tallies for `self` are the supply, created from nothing, and there is at most one
-`issue:` per transaction. A transaction that assigns an asset it does not carry, tallies an
-`OP_RETURN` output or an output that does not exist, names `self` without issuing, or repeats
-an output within one asset, is invalid, and so is its block (`sidestr:rule-assets`, error
-`bad-tally`). Spending a tallied output without tallying its assets onward destroys them; that
-is allowed and is how an asset is burned. Assets never touch the peg: a burn (section 7) is of
-sats only, and an asset has no parent.
-
-### 12.3 The `pool` rule
-
-A **pool** is one coin, the pool coin, that holds `x` sats (its value) and `y` units of one
-asset `A` (its tally), with script `OP_TRUE` (`51`): anyone may spend it, and the rule says how.
-The pool's id is the txid of the transaction that opened it. Its **shares** are an asset whose
-id is the pool id, minted and destroyed only by this rule.
-
-Opening: a transaction carries `pool:self:<vout>` naming an output with script `51`, value
-`x0 > 0` and a tally of `y0 > 0` of exactly one asset `A`; the same transaction tallies
-`floor(sqrt(x0 * y0))` shares to outputs of its choice as `tally:self:…`: the pool id is this
-txid, so `self` is the share asset here, and a transaction that opens a pool does not also
-`issue:`. A pool coin is never tallied with a second asset.
-
-Spending: a transaction spends at most one pool coin, and recreates exactly one output with
-script `51`, a `pool:<pool id>:<vout>` record, value `x'` and a tally `y'` of `A`. Let `S` be
-the shares in existence before the transaction and `S'` after (shares tallied minus shares
-carried in). Exactly one of the following holds, or the block is invalid
-(`sidestr:rule-pool`, error `bad-pool`):
-
-- **swap**: `S' = S`, and with `dx = max(x' - x, 0)`, `dy = max(y' - y, 0)`, the fee of 3
-  per 1000 on what comes in, `(1000 x' - 3 dx) (1000 y' - 3 dy) >= 1000000 x y`.
-- **add**: `S' > S`, `x' >= x`, `y' >= y`, and `S' - S <= min(floor((x' - x) S / x),
-  floor((y' - y) S / y))`.
-- **remove**: `S' < S`, `x' <= x`, `y' <= y`, and `x - x' <= floor(x (S - S') / S)`,
-  `y - y' <= floor(y (S - S') / S)`, with `x' >= 1` and `y' >= 1`: a pool is never emptied.
-
-Every rounding is in the pool's favour. Amounts are exact: a transaction names the pool coin
-it spends and the pool it leaves, so two transactions on one pool in one block conflict as any
-two spends of one coin do, the second is refused and rebuilt against the new state, and a
-refused one costs nothing. Multi-hop routes are several transactions. The signer orders
-transactions and so can front-run them; at level 1 that is the signer's to refrain from and the
-document says so, at level 2 it takes `k` of them.
-
-### 12.4 Assets between chains
-
-Reserved, and shaped now so the records need not change: an asset may be pegged from one
-sidestr chain to another exactly as sats are pegged from the parent (sections 6 and 7). On the
-origin chain a transaction burns the asset: a `pegout:<destination script hex>` record with a
-tally of the asset assigned to that output. On the destination chain the signers claim it as
-the coinbase issuance of a wrapped asset whose id is `<origin chain id>:<origin asset id>`,
-paired with a `claim:` record naming the origin txid, so a validator with a view of the origin
-(its mirror, its announcements) checks each claim. The way back is the same burn on the
-destination and a payout of the origin asset from what the peg holds. The trust is the
-destination's signers, so this is for level 2 chains; a chain that adopts it says so in its
-document. A pool is one coin under one chain's rules and is never shared across chains: to
-trade an asset from elsewhere, peg it across, then swap.
-
-### 12.5 What a wallet does
-
-A wallet reads pools from the mirror as it reads coins: the pool coin's value and tally are
-the price. It quotes a swap client-side by the formula, builds the transaction with the exact
-amounts, signs its own inputs with the key-path spend of section 3, and leaves the pool
-coin's input witness empty (`OP_TRUE` needs none). It shows an asset by its ticker and
-decimals, and says that the asset is unbacked.
+Reserved in the core. Issued assets and an automated market maker between them and the pegged
+coin are rules in the sense of section 8, validated by every node, and are not part of 0.0.1. An
+issued asset is unbacked and every document that names it says so. Proposal, with two rules a
+chain document may name: [proposals/assets-and-pools.md](proposals/assets-and-pools.md).
 
 ## 13. Acceptance test
 
@@ -424,6 +259,24 @@ decimals, and says that the asset is unbacked.
 - **A mirror lies**: caught by the tip announcement and by validation.
 - **A parent stalls**: every child's refund clock stops with it (3.1). Coins are not lost,
   they wait; a child pegged off a chain with no heartbeat waits indefinitely.
+
+## 15. Proposals
+
+Mechanisms tried on a chain before they are promoted into this document. Each file says its
+status. The core above changes only when a proposal has run unchanged for a while.
+
+| proposal | status |
+|---|---|
+| [The desk](proposals/desk.md) | running on `sidestr:txbt4-desk` |
+| [Checkpoints](proposals/checkpoints.md) | running on `sidestr:gitmark` |
+| [Assets and pools](proposals/assets-and-pools.md) | running on `sidestr:tally`; assets between chains: draft |
+| [Level 2: several signers](proposals/level-2.md) | draft |
+
+## 16. Changelog
+
+- 2026-09-18 — the peg-out record (section 7) and the tip announcement shape (section 11)
+  settled from live use; the window bound and `t` tag noted. Drafts moved to `proposals/`.
+- 2026-09-15 — 0.0.1 draft.
 
 ## Appendix A. Event kinds
 

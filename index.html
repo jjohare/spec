@@ -38,8 +38,11 @@
 <main id="doc">Loading the spec…</main>
 <script type="module">
   import { marked } from 'https://cdn.jsdelivr.net/npm/marked@15.0.12/lib/marked.esm.js';
-  const md = await (await fetch('SPEC.md')).text();
+  // ?doc=proposals/desk.md renders a proposal the same way; links to .md files in the text go through it
+  const want = new URLSearchParams(location.search).get('doc') ?? 'SPEC.md'; const doc = /^(SPEC|README|proposals\/[a-z0-9-]+)\.md$/.test(want) ? want : 'SPEC.md';
+  const md = await (await fetch(doc)).text();
   document.getElementById('doc').innerHTML = marked.parse(md);
+  for (const a of document.querySelectorAll('#doc a[href]')) { const h = a.getAttribute('href'); const m = /^(?:\.\.\/)?((?:proposals\/)?[A-Za-z0-9-]+\.md)$/.exec(h); if (m) a.setAttribute('href', `?doc=${m[1]}`); }
 </script>
 </body>
 </html>
