@@ -207,7 +207,7 @@ if (cmd === 'produce') {
       if (!v.ok) return log(`pledge ${d.slice(0, 16)}… from ${url}: refused, ${v.error}`);
       const spendable = s.coins(chain.challenge).filter((c) => !c.coinbase || s.height() + 1 - c.height >= s.k.params.coinbaseMaturity).reduce((a, c) => a + c.value, 0);
       if (v.pays + 2000 > spendable) return log(`pledge ${d.slice(0, 16)}…: the float has ${spendable} sats, ${v.pays} needed; not paid (try later)`);
-      const b = await buildSpend({ engine, chain, signer, key, url: `http://127.0.0.1:${args.port ?? 3450}`, to: v.payee, amount: v.pays }); const r = s.submit(b.hex);
+      const b = await buildSpend({ engine, chain, signer, key, url: `http://127.0.0.1:${args.port ?? 3450}`, to: v.payee, amount: v.pays }); const r = await s.submit(b.hex);
       desk.pledges[d] = { txid: ptxid, vout: Number(pvout), amount: v.amount, payee: v.payee, paid: v.pays, paidTxid: r.txid, payTxid: v.txid, hex: String(ev.content).trim(), maturity: v.maturity, at: Math.floor(Date.now() / 1000), event: ev.id, broadcast: null };
       await saveDesk(); log(`pledge ${d.slice(0, 16)}…: ${v.amount} sats locked until ${v.maturity}; paid ${v.pays} sats to ${v.payee.slice(0, 12)}… in ${r.txid.slice(0, 16)}…`);
     }).catch((e) => log(`pledge: ${e.message}`)); };
@@ -292,7 +292,7 @@ if (cmd === 'produce') {
       return createReadStream(s.dat, { start, end }).pipe(res);
     }
     if (path.startsWith('/coins/')) return json(200, s.coins(path.slice(7).toLowerCase()));
-    if (path === '/tx' && req.method === 'POST') { let body = ''; for await (const c of req) { body += c; if (body.length > 262144) { req.destroy(); return json(413, { error: 'transaction over 256 KB' }); } } try { const r = s.submit(body.trim()); log(`tx ${r.txid.slice(0, 16)}… accepted, fee ${r.fee}`); return json(200, r); } catch (e) { return json(400, { error: e.message }); } }
+    if (path === '/tx' && req.method === 'POST') { let body = ''; for await (const c of req) { body += c; if (body.length > 262144) { req.destroy(); return json(413, { error: 'transaction over 256 KB' }); } } try { const r = await s.submit(body.trim()); log(`tx ${r.txid.slice(0, 16)}… accepted, fee ${r.fee}`); return json(200, r); } catch (e) { return json(400, { error: e.message }); } }
     json(404, { error: 'not found' });
   }).listen(port, '127.0.0.1', () => log(`producer on http://127.0.0.1:${port}/ every ${interval / 1000} s (${txInterval / 1000} s with transactions)`));
 }
