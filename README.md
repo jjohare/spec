@@ -16,16 +16,21 @@ same rule that everything a verifier does runs in a browser tab.
 The reference implementation, on the same engine as datstr and blaketestnode:
 
     siding/chain.json      the txbt4 siding: id, parent, challenge, the four genesis pegs, powLimit, prefix
-    siding/lib/overlay.mjs the network overlay and the block-signature rule (SPEC 3, 4)
-    siding/lib/block.mjs   building, the signed block data, the virtual transactions, the solution push
-    siding/lib/chain.mjs   genesis (SPEC 5), the block file, the UTXO set, a mempool, production
-    siding/bin/siding.mjs  key | genesis | produce | sync | send
+    chains/<name>/         every other chain, one document each (`siding new` writes them)
+    siding/lib/overlay.mjs the network overlay, the block-signature rule, the claim and burn rules (SPEC 3, 4, 6, 7)
+    siding/lib/announce.mjs the tip announcement: a chain found by its id alone (SPEC 11)
+    siding/lib/parent.mjs  the parent over RPC: peg-ins scanned and claimed, burns paid from the peg wallet
+    siding/bin/siding.mjs  new | key | genesis | produce | sync | send | faucet
 
-    node siding/bin/siding.mjs key --create           a signer key in ~/.sidestr/<name>.key
-    node siding/bin/siding.mjs produce --dir DIR       blocks every 10 minutes, sooner with transactions
-    node siding/bin/siding.mjs sync --url URL --dir D  validate a producer's chain, no key needed
+    node siding/bin/siding.mjs new --name X --prefix Y     a whole chain: document, key, genesis, the lines to run it
+    node siding/bin/siding.mjs produce --chain C --dir D   blocks on an interval, sooner with transactions
+    node siding/bin/siding.mjs sync --url URL --dir D      validate a producer's chain, no key needed
 
-Needs checkouts of bitcoin-desktop/schema (SCHEMA) and bitcoin-blake/blaketestnode (BLAKETESTNODE).
-The genesis is deterministic: the same chain document gives the same block 0, byte for byte.
+Needs a checkout of bitcoin-desktop/schema (SCHEMA). The genesis is deterministic: the same
+chain document gives the same block 0, byte for byte.
+
+Around it: the [explorer](https://github.com/sidestr/explorer) and [wallet](https://github.com/sidestr/wallet)
+take `?chain=<id>` and find the chain from its announcement; the [directory](https://github.com/play-grounds/sidestr)
+lists every chain that has announced itself.
 
 Picking this up as a developer or an agent: start with [siding/README.md](siding/README.md), the map of the reference implementation and what is not yet built.
