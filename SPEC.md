@@ -86,7 +86,8 @@ Two consequences follow, and a child's document should state its depth:
 A block is valid when it is valid under the parent's rules with these changes, in this order:
 
 1. `pow`: the header meets `powLimit`. No difficulty adjustment, no minimum-difficulty window.
-2. `signature`: the coinbase's witness commitment output carries, after the commitment, the
+2. `signature`: the coinbase's witness commitment output carries, after the commitment, one
+   push (a direct push, `OP_PUSHDATA1` or `OP_PUSHDATA2`, whichever its size needs) of the
    bytes `ecc7daa2` followed by a script witness that satisfies `challenge` for the block's
    signet hash, computed as [BIP 325](https://github.com/bitcoin/bips/blob/master/bip-0325.mediawiki)
    computes it over this chain's header serialization. A block without the marker, or whose
@@ -175,6 +176,59 @@ would on any chain, and the block signatures do not settle it.
 | 3 | level 2 plus several independent signers with rotation and a recovery path | liveness only |
 
 The first chain is level 1 with one signer. Section 10 says so.
+
+### 9.1 Level 2: several signers
+
+Draft. A level 2 chain has `n` signers and a threshold `k`. Nothing changes for a validator:
+the challenge is still a script and a block is still valid when its solution satisfies it.
+
+**Challenge.** A taproot output whose internal key is provably unspendable (the BIP 341 NUMS
+point tweaked by the chain id) and whose single leaf is `multi_a(k, pk_1, …, pk_n)`:
+`<pk_1> CHECKSIG <pk_2> CHECKSIGADD … <pk_n> CHECKSIGADD <k> NUMEQUAL`. The document lists
+`signers` (the `pk_i`, in leaf order) and `threshold`, and `challenge` is derived from them,
+so a validator can check the derivation. The solution is the script-path witness: `n`
+signature slots in leaf order, an empty item for a signer who did not sign, then the leaf
+script and the control block; it is carried as one push of any length after the witness
+commitment (section 4), `OP_PUSHDATA1` or `OP_PUSHDATA2` as its size needs.
+
+**Signer keys are Nostr keys.** A signer's `pk_i` is the key it publishes events with, so a
+proposal or a partial signature is authenticated by the event itself and no second identity
+is needed.
+
+**The round.** Every signer runs a producer: the same validator, the same mempool, its own
+mirror. At each height the proposer is signer `height mod n`; after `proposeAfter` seconds
+without a block, the next signer in order may propose, and so on around the ring.
+
+1. The proposer builds the block without its solution and publishes it as a kind 23510 event:
+   content the block hex, tags `chain` = chain id, `h` = height. It signs the block data itself
+   and includes its own partial signature as a kind 23511 event referencing the proposal.
+2. Each other signer validates the proposal against its own chain and rules exactly as it
+   would a block from the mirror, requires that every transaction is one it has seen valid,
+   that the height is its tip plus one, that the proposer is entitled at this time, and that it
+   has not signed another proposal for this height. If all hold it publishes a kind 23511
+   event: content its BIP 340 signature over the block data (section 4, the same message the
+   level 1 signature covers), tags `chain`, `h`, `e` = the proposal event id.
+3. With `k` signatures the proposer assembles the witness in leaf order, appends the solution,
+   adds the block to its chain, and announces it (section 11). Every signer's producer adds
+   the announced block from any signer's mirror as a follower does, and the next round starts.
+
+A signer that signs two proposals for one height is faulty; the documents of a chain say what
+its signers do about that, and a validator sees both signatures on the relay. A block needs
+`k` of `n` signers online; with fewer the chain halts, heartbeats included, and every child's
+refund clock with it (section 3.1). Level 3 adds rotation and a recovery path.
+
+**Announcements.** Any signer may publish the kind 33333 tip event. A client that knows the
+document accepts an announcement from any listed signer and prefers the highest tip; the `u`
+tags name every signer's mirror.
+
+**The peg wallet.** The peg outputs on the parent are the same `k`-of-`n` under the same keys:
+a `tr(NUMS, multi_a(k, …))` descriptor. A peg-out (section 7) is a PSBT the proposer publishes
+as kind 23512 and the co-signers return signed as kind 23513, the same round with the same
+rule of one signature per burn per signer, finalized and broadcast by the proposer.
+
+**Changing the signers.** A new `signers`/`threshold` pair with its derived challenge is a
+rule document (section 8) with an activation height; the peg outputs move to the new
+descriptor by a peg-out to it, paid by the old set.
 
 ## 10. The first chain: the txbt4 siding
 
@@ -338,6 +392,11 @@ decimals, and says that the asset is unbacked.
 | kind | name | class |
 |---|---|---|
 | 23500 | transaction | ephemeral |
+| 23501 | faucet request, content an address | ephemeral |
+| 23510 | block proposal, content the block hex without its solution (9.1) | ephemeral |
+| 23511 | partial block signature, `e` = proposal (9.1) | ephemeral |
+| 23512 | peg-out PSBT to co-sign (9.1) | ephemeral |
+| 23513 | co-signed peg-out PSBT, `e` = 23512 (9.1) | ephemeral |
 | 33333 | tip, NIP-333 shape, `d` = chain id | addressable |
 | 33500 | rule document, `d` = chain id : activation height | addressable |
 | 33501 | genesis document, `d` = chain id | addressable |
