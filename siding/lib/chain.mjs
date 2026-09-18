@@ -2,7 +2,7 @@
 // format, the UTXO set replayed from it, a mempool, and block production (SPEC 4, 5, 11).
 import { BLAKETESTNODE } from './engine.mjs';
 import { buildBlock, signBlock } from './block.mjs';
-import { claimMarker, outpointOf } from './overlay.mjs';
+import { claimMarker, outpointOf, parsePegout, parsePegouts } from './overlay.mjs';
 const { ChainNode } = await import(`${BLAKETESTNODE}/lib/node.mjs`);
 const { readIndex, writeIndex, appendBlock, readBlock } = await import(`${BLAKETESTNODE}/lib/blockfile.mjs`);
 
@@ -68,6 +68,9 @@ export class Siding {
     for (const i of tx.inputs) { const key = keyOf(i.prevout); if (this.mempoolSpent.has(key)) throw new Error(`input ${key} already spent in the mempool`); const c = this.utxo.get(key); if (!c) throw new Error(`input ${key} is not an unspent coin`);
       if (c.coinbase && this.node.height + 1 - c.height < this.k.params.coinbaseMaturity) throw new Error(`input ${key} is an immature coinbase`); prevouts.push(c.output); inSum += c.output.value; }
     const outSum = tx.outputs.reduce((s, o) => s + o.value, 0); if (outSum > inSum) throw new Error('outputs exceed inputs');
+    // SPEC 7: a burn names a parent script and carries at least pegoutMin, as the block rule will demand
+    for (const o of tx.outputs) { const d = this.k.codec; if (!o.scriptPubKey.startsWith('6a')) continue; const script = parsePegout(o.scriptPubKey); const text = (() => { try { return new TextDecoder().decode(Uint8Array.from((o.scriptPubKey.slice(4).match(/../g) ?? []), (x) => parseInt(x, 16))); } catch { return ''; } })();
+      if (text.startsWith('pegout:') && !script) throw new Error('a peg-out names a parent output script of 2 to 40 bytes as hex'); if (script && o.value < this.pegoutMin()) throw new Error(`a peg-out burns at least ${this.pegoutMin()} sats`); }
     // producer policy, published in chain.json so a wallet can compute it: at least minFeeRate sat/vB
     const vsize = this.vsize(tx), minFee = Math.ceil(vsize * this.minFeeRate()); if (inSum - outSum < minFee) throw new Error(`fee ${inSum - outSum} is below the minimum ${minFee} sats (${vsize} vB at ${this.minFeeRate()} sat/vB)`);
     tx.inputs.forEach((_, i) => { const v = k.interpreter.verifyInput(tx, i, prevouts[i], prevouts, null, { unifiedSighash: true }); if (v.ok !== true) throw new Error(`input ${i}: ${v.error ?? v.reason ?? 'script failed'}`); });
@@ -75,6 +78,9 @@ export class Siding {
     return { txid, fee: inSum - outSum, vsize };
   }
   vsize(tx) { return Math.ceil(this.k.codec.txWeight(tx) / 4); }
+  pegoutMin() { return Number(this.chain.pegoutMin ?? 10000); }
+  // every burn the chain has validated, oldest first (SPEC 7)
+  pegouts() { return [...(this.engine.sidestr?.pegouts.values() ?? [])].sort((a, b) => a.height - b.height); }
   minFeeRate() { return Number(this.chain.minFeeRate ?? 1); }
   fees(tx) { return tx.inputs.reduce((s, i) => s + this.utxo.get(keyOf(i.prevout)).output.value, 0) - tx.outputs.reduce((s, o) => s + o.value, 0); }
   // SPEC 4: a block on the tip with everything in the mempool, fees to the signer, signed

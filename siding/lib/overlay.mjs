@@ -26,6 +26,17 @@ export function parseClaims(coinbase) {
   return { claims, errors };
 }
 
+// --- peg-outs (SPEC 7) -----------------------------------------------------------------
+// A burn is an OP_RETURN output carrying `pegout:<parent output script hex>` with a value: the
+// value leaves the supply and the peg holders owe that script that value on the parent. The
+// producer records each burn as it validates the block, by height, like claims.
+export function pegoutMarker(script) { const d = enc.encode(`pegout:${script.toLowerCase()}`); return '6a' + d.length.toString(16).padStart(2, '0') + toHex(d); }
+export function parsePegout(spk) {
+  const d = opReturnData(spk); if (!d) return null; let t; try { t = dec.decode(d); } catch { return null; }
+  const m = /^pegout:((?:[0-9a-f]{2}){2,40})$/.exec(t); return m ? m[1] : null;
+}
+export function parsePegouts(tx, txid) { const out = []; tx.outputs.forEach((o, i) => { const script = parsePegout(o.scriptPubKey); if (script) out.push({ txid, vout: i, script, value: o.value }); }); return out; }
+
 export function sidestrGraph(chain) {
   return {
     '@id': 'sidestr:overlay', '@context': { sidestr: 'https://sidestr.com/ns#', knots: 'https://bitcoinknots.org/ns#' },
@@ -39,7 +50,10 @@ export function sidestrGraph(chain) {
         powHash: 'knots:blake2b-v2', structVariants: { 'btc:BlockHeader': [{ when: { field: 'version', bit: 31 }, struct: 'knots:BlockHeaderV2' }] },
         blake2bHeight: 0, blake2bHeadline: '', unifiedSighashParam: 'blake2bHeight', rdtsExpiryTime: 0,
         sidestrParent: chain.parent, sidestrChallenge: chain.challenge, sidestrPegConfirmations: chain.pegConfirmations ?? 6, sidestrRefundBlocks: chain.refundBlocks ?? 10000,
+        sidestrPegoutBlocks: chain.pegoutBlocks ?? 144, sidestrPegoutMin: chain.pegoutMin ?? 10000,
       },
+      { '@id': 'sidestr:rule-pegouts', '@type': 'ValidationRule', ruleSet: 'btc:BlockContextRules', label: 'pegouts', errorCode: 'bad-pegout',
+        comment: 'A pegout:<script> OP_RETURN names a parent output script of 2 to 40 bytes and carries at least pegoutMin sats; the coinbase carries none (SPEC 7). The value leaves the supply; the peg holders owe it on the parent.' },
       { '@id': 'sidestr:rule-claims', '@type': 'ValidationRule', ruleSet: 'btc:BlockContextRules', label: 'claims', errorCode: 'bad-claim',
         comment: 'Each claim:<txid>:<vout> OP_RETURN in the coinbase is immediately preceded by its payout output; no outpoint is claimed twice in the block or on the chain (SPEC 6). A level-1 validator accepts what the signers claim; a level-2 validator also checks each pair against the parent.' },
       { '@id': 'sidestr:rule-block-signature', '@type': 'ValidationRule', ruleSet: 'btc:BlockRules', label: 'block-signature', errorCode: 'bad-block-signature',
@@ -54,9 +68,19 @@ export const sidestrOverlay = (chain, { hash }) => ({
   // height (a block re-validated, or a competing block at the same height, may claim the same
   // outpoint); a different height may not. Level 1: no reorgs, so no unwinding is needed.
   claims: new Map(),
+  // burns seen so far: `${txid}:${vout}` -> { txid, vout, script, value, height }
+  pegouts: new Map(),
   installChecks({ blocks, interpreter, codec, params }) {
-    const claimed = this.claims;
+    const claimed = this.claims, burned = this.pegouts;
     blocks.registerChecks({ blockContext: {
+      'sidestr:rule-pegouts': ({ block, height }) => {
+        if (block.transactions[0].outputs.some((o) => parsePegout(o.scriptPubKey))) return false;
+        const found = [];
+        for (const tx of block.transactions.slice(1)) { const txid = codec.txid(tx); for (const o of tx.outputs) { const d = opReturnData(o.scriptPubKey); if (!d) continue; let t = ''; try { t = dec.decode(d); } catch {} if (!t.startsWith('pegout:')) continue;
+          const script = parsePegout(o.scriptPubKey); if (!script || o.value < params.sidestrPegoutMin) return false; found.push({ txid, vout: tx.outputs.indexOf(o), script, value: o.value, height }); } }
+        for (const b of found) { const k = outpointOf(b.txid, b.vout); const at = burned.get(k)?.height; if (at !== undefined && at !== height) return false; burned.set(k, b); }
+        return true;
+      },
       'sidestr:rule-claims': ({ block, height }) => {
         const { claims, errors } = parseClaims(block.transactions[0]); if (errors.length) return false;
         const inBlock = new Set();

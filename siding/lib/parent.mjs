@@ -6,13 +6,15 @@ const enc = new TextEncoder(), dec = new TextDecoder();
 const fromHex = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));
 const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
-export async function makeParent({ url, cookieFile }) {
+export async function makeParent({ url, cookieFile, wallet = null }) {
   const auth = 'Basic ' + Buffer.from((await readFile(cookieFile, 'utf8')).trim()).toString('base64');
-  const rpc = async (method, params = []) => {
-    const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', authorization: auth }, body: JSON.stringify({ jsonrpc: '1.0', id: 'siding', method, params }) });
+  const rpc = async (method, params = [], endpoint = url) => {
+    const r = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'text/plain', authorization: auth }, body: JSON.stringify({ jsonrpc: '1.0', id: 'siding', method, params }) });
     const j = await r.json(); if (j.error) throw new Error(`${method}: ${j.error.message}`); return j.result;
   };
-  return { rpc, height: () => rpc('getblockcount') };
+  // the peg wallet's RPCs go to /wallet/<name>; without a wallet name the parent is read-only
+  const walletRpc = wallet ? (method, params = []) => rpc(method, params, `${url.replace(/\/$/, '')}/wallet/${encodeURIComponent(wallet)}`) : null;
+  return { rpc, walletRpc, wallet, height: () => rpc('getblockcount') };
 }
 
 // The marker: `pegin:<chain id>:` then the sidechain output script, as raw bytes (61 bytes for a
@@ -47,4 +49,33 @@ export async function scanPegins(parent, { chainId, from, to, onBlock = () => {}
 export async function pegStatus(parent, { txid, vout }) {
   const o = await parent.rpc('gettxout', [txid, vout, true]); if (!o) return { unspent: false, confirmations: null };
   return { unspent: true, confirmations: o.confirmations };
+}
+
+// --- peg-outs (SPEC 7): the parent side ---------------------------------------------------
+// The parent payment carries `pegout:<chain id>:` then the sidechain txid as raw bytes (61 bytes
+// for this chain), so the record fits an OP_RETURN and a validator with a parent view can pair
+// each burn with its payment.
+export function pegoutMarkerData(chainId, sideTxid) { const head = enc.encode(`pegout:${chainId}:`); const out = new Uint8Array(head.length + 32); out.set(head); out.set(fromHex(sideTxid), head.length); return out; }
+export function parsePegoutMarker(spkHex, chainId) {
+  const m = /^6a(?:4c)?([0-9a-f]{2})([0-9a-f]*)$/i.exec(spkHex); if (!m) return null; const b = fromHex(m[2]); if (parseInt(m[1], 16) !== b.length) return null;
+  const head = enc.encode(`pegout:${chainId}:`); if (b.length !== head.length + 32) return null; for (let i = 0; i < head.length; i++) if (b[i] !== head[i]) return null;
+  return toHex(b.subarray(head.length));
+}
+// pay one burn from the peg wallet: the parent script gets the burned value, the marker rides along
+export async function payPegout(parent, { chainId, txid, script, value }) {
+  if (!parent.walletRpc) throw new Error('no peg wallet: start with --parent-wallet <name>');
+  const { address } = await parent.rpc('decodescript', [script]); if (!address) throw new Error(`script ${script.slice(0, 16)}… has no address on the parent`);
+  const btc = (value / 1e8).toFixed(8); const data = toHex(pegoutMarkerData(chainId, txid));
+  const r = await parent.walletRpc('send', [[{ [address]: btc }, { data }], null, 'unset', 1]);
+  if (!r?.complete || !r.txid) throw new Error(`send did not complete: ${JSON.stringify(r).slice(0, 200)}`);
+  return { parentTxid: r.txid, address, value };
+}
+// every burn the peg wallet has already paid, from the wallet's own history: sidechain txid -> parent txid
+export async function paidPegouts(parent, { chainId }) {
+  const paid = new Map(); if (!parent.walletRpc) return paid;
+  const seen = new Set(); const list = await parent.walletRpc('listtransactions', ['*', 10000, 0, true]);
+  for (const t of list) { if (t.category !== 'send' || seen.has(t.txid)) continue; seen.add(t.txid);
+    const g = await parent.walletRpc('gettransaction', [t.txid, true, true]);
+    for (const o of g.decoded?.vout ?? []) { const side = parsePegoutMarker(o.scriptPubKey?.hex ?? '', chainId); if (side) paid.set(side, t.txid); } }
+  return paid;
 }

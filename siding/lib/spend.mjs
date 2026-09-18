@@ -4,6 +4,7 @@
 import { homedir } from 'node:os';
 import { decodeAddress, scriptToAddress } from './address.mjs';
 import { makeEvents, publish } from './relay.mjs';
+import { pegoutMarker } from './overlay.mjs';
 
 // --to is a script hex or a segwit address under any prefix: the script is what is paid
 export function resolveTo(to, hrp) {
@@ -12,9 +13,12 @@ export function resolveTo(to, hrp) {
   return { script: a.script, note: a.hrp === hrp ? null : `${String(to).slice(0, 12)}… carries prefix '${a.hrp}', this chain's is '${hrp}' (${scriptToAddress(a.script, hrp)}); paying its script` };
 }
 
-export async function buildSpend({ engine, chain, signer, key, url, to, amount, fee = null }) {
+// pegout: `to` is a parent address (or script); the amount is burned to `pegout:<script>` and the
+// peg holders pay it on the parent (SPEC 7)
+export async function buildSpend({ engine, chain, signer, key, url, to, amount, fee = null, pegout = false }) {
   const k = engine.k, pub = signer.pubkeyOf(key), spk = '5120' + pub, base = url.replace(/\/$/, ''), rate = Number(chain.minFeeRate ?? 1);
-  const dest = resolveTo(to, k.params.bech32Hrp); amount = Number(amount); if (!Number.isInteger(amount) || amount <= 0) throw new Error('the amount is a whole number of sats');
+  const dest = pegout ? { script: pegoutMarker(resolveTo(to, k.params.bech32Hrp).script), note: `peg-out: ${amount} sats burn here and are owed to ${to} on ${chain.parent} (at least ${chain.pegoutMin ?? 10000})` } : resolveTo(to, k.params.bech32Hrp);
+  amount = Number(amount); if (!Number.isInteger(amount) || amount <= 0) throw new Error('the amount is a whole number of sats'); if (pegout && amount < Number(chain.pegoutMin ?? 10000)) throw new Error(`a peg-out burns at least ${chain.pegoutMin ?? 10000} sats`);
   const tip = await (await fetch(`${base}/tip`)).json();
   const coins = (await (await fetch(`${base}/coins/${spk}`)).json()).filter((c) => !c.coinbase || tip.height + 1 - c.height >= k.params.coinbaseMaturity).sort((a, b) => b.value - a.value);
   const bound = fee ?? Math.ceil(rate * 200); const picked = []; let sum = 0; for (const c of coins) { picked.push(c); sum += c.value; if (sum >= amount + bound) break; }

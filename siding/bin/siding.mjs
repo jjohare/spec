@@ -7,11 +7,13 @@
 //   siding send --url http://host:3450 --chain chain.json --to <address or script> --amount <sats> [--fee <sats>]
 //       the fee defaults to the transaction's size at the chain's minFeeRate (chain.json, sat/vB)
 //   siding send --relay wss://a,wss://b ...   the same, published as a kind 23500 event instead of POSTed
+//   siding send --pegout --to <parent address> --amount <sats>   burn on the sidechain; the peg wallet pays it on the parent (SPEC 7)
 //   siding produce ... --relay wss://a,wss://b  also follow those relays for kind 23500 transactions
 //   siding faucet --chain chain.json --url http://127.0.0.1:3450 --relay wss://a,wss://b --key-file F [--amount 100000] [--per-address-hours 24] [--per-hour 20]
 //       pay kind 23501 requests (content: an address) from this key, once per address per period, capped per hour
 //   siding produce ... --announce-mirror https://a/siding[,https://b/siding]  publish the tip (NIP-333, kind 33333, d = chain id)
 //       to the relays after every block, naming those mirrors; a client that knows only the chain id finds the chain
+//   siding produce ... --parent-wallet <name>  the parent wallet holding the peg outputs: every burn is paid from it (SPEC 7)
 //   siding produce ... --parent-rpc http://host:port/ --parent-cookie FILE [--parent-from H] [--parent-poll 60]
 //       with a parent view (SPEC 6): scan the parent for this chain's peg-ins and claim each once it has
 //       pegConfirmations; scan state in <dir>/pegins.json
@@ -24,7 +26,7 @@ import { homedir } from 'node:os';
 import { loadEngine } from '../lib/engine.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
-import { makeParent, scanPegins, pegStatus } from '../lib/parent.mjs';
+import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts } from '../lib/parent.mjs';
 import { buildSpend, deliver, resolveTo } from '../lib/spend.mjs';
 import { FAUCET_KIND, makeEvents as mkEvents } from '../lib/relay.mjs';
 import { tipEvent, TIP_HEADERS } from '../lib/announce.mjs';
@@ -78,7 +80,7 @@ if (cmd === 'produce') {
   setInterval(tick, 1000);
   // SPEC 6: with a parent view, claim confirmed peg-ins. Which outpoints are already claimed is
   // derived from the chain itself on open; only the scan position and what was found persist.
-  const parent = args['parent-rpc'] ? await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie` }) : null;
+  const parent = args['parent-rpc'] ? await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args['parent-wallet'] ?? null }) : null;
   const pegFile = `${dir}/pegins.json`; let pegState = { scanned: Number(args['parent-from'] ?? 0) - 1, pegins: [] };
   try { pegState = JSON.parse(await readFile(pegFile, 'utf8')); } catch {}
   const savePegs = () => writeFile(pegFile, JSON.stringify(pegState, null, 1)); let scanning = false;
@@ -101,12 +103,32 @@ if (cmd === 'produce') {
     } catch (e) { log(`parent: ${e.message}`); } finally { scanning = false; }
   };
   if (parent) { log(`parent ${args['parent-rpc']}: peg-ins for ${chain.id} from h${pegState.scanned + 1}, claim at ${chain.pegConfirmations ?? 6} confirmations`); setInterval(pegTick, Number(args['parent-poll'] ?? 60) * 1000); pegTick(); }
+  // SPEC 7: every burn the chain validated is paid on the parent from the peg wallet, once. The
+  // record is <dir>/pegouts.json, reconciled on start with the wallet's own history so a crash
+  // between paying and recording cannot pay twice.
+  const outFile = `${dir}/pegouts.json`; let outState = { paid: {} }; let paying = false;
+  try { outState = JSON.parse(await readFile(outFile, 'utf8')); } catch {}
+  const pegoutTick = async () => {
+    if (!parent?.walletRpc || paying) return; paying = true;
+    try {
+      const due = s.pegouts().filter((b) => !outState.paid[`${b.txid}:${b.vout}`]); if (!due.length) return;
+      const already = await paidPegouts(parent, { chainId: chain.id });
+      for (const b of due) { const key = `${b.txid}:${b.vout}`;
+        if (already.has(b.txid)) { outState.paid[key] = { parentTxid: already.get(b.txid), value: b.value, script: b.script, height: b.height, at: Math.floor(Date.now() / 1000), reconciled: true }; log(`peg-out ${key.slice(0, 16)}… was already paid on the parent in ${already.get(b.txid).slice(0, 16)}…`); continue; }
+        const r = await payPegout(parent, { chainId: chain.id, txid: b.txid, script: b.script, value: b.value });
+        outState.paid[key] = { parentTxid: r.parentTxid, address: r.address, value: b.value, script: b.script, height: b.height, at: Math.floor(Date.now() / 1000) };
+        await writeFile(outFile, JSON.stringify(outState, null, 1)); log(`peg-out ${key.slice(0, 16)}…: paid ${b.value} sats to ${r.address} on the parent, txid ${r.parentTxid.slice(0, 16)}…`); }
+      await writeFile(outFile, JSON.stringify(outState, null, 1));
+    } catch (e) { log(`peg-out: ${e.message}`); } finally { paying = false; }
+  };
+  if (parent?.walletRpc) { log(`parent wallet ${parent.wallet}: peg-outs for ${chain.id} are paid from it, ${Object.keys(outState.paid).length} paid so far`); setInterval(pegoutTick, Number(args['parent-poll'] ?? 60) * 1000); setTimeout(pegoutTick, 5000); }
+  else if (parent) log('no --parent-wallet: peg-outs are recorded but not paid');
   const port = Number(args.port ?? 3450);
   http.createServer(async (req, res) => {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, announce: mirrors.length ? { mirrors, announced } : null, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
+    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, announce: mirrors.length ? { mirrors, announced } : null, pegouts: { burned: s.pegouts().length, paid: Object.keys(outState.paid).length, min: s.pegoutMin(), payer: parent?.wallet ?? null }, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
     if (path === '/chain.json') return json(200, { ...chain, genesisHash: s.genesisHash });
     if (path === '/tip') return json(200, s.tip());
     if (path === '/blocks.json') return json(200, s.index);
@@ -138,7 +160,7 @@ if (cmd === 'sync') {
 if (cmd === 'send') {
   // spend this key's mature coins as the producer reports them; the fee from size unless --fee
   const key = await loadKey(keyPath, { signer }); const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean);
-  const b = await buildSpend({ engine, chain, signer, key, url: args.url ?? 'http://127.0.0.1:3450', to: args.to, amount: args.amount, fee: args.fee != null ? Number(args.fee) : null });
+  const b = await buildSpend({ engine, chain, signer, key, url: args.url ?? 'http://127.0.0.1:3450', to: args.to, amount: args.amount, fee: args.fee != null ? Number(args.fee) : null, pegout: !!args.pegout });
   if (b.note) console.error(`note: ${b.note}`);
   const d = await deliver({ engine, chain, signer, hex: b.hex, relays, url: args.url ?? 'http://127.0.0.1:3450' });
   console.log(JSON.stringify({ txid: b.txid, ...d, inputs: b.inputs, amount: b.amount, fee: b.fee, vsize: b.vsize }, null, 1)); process.exit(d.error ? 1 : 0);

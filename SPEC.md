@@ -139,13 +139,19 @@ tick; the coins stay pegged.
 
 ## 7. Peg-out
 
-A peg-out is a sidechain transaction paying a **burn output**: `OP_RETURN` with
-`pegout:<parent output script hex>` and a value. The value leaves the sidechain's supply.
-The peg holders then pay that script that value on the parent from the peg outputs, in a
-transaction that also carries `OP_RETURN` `pegout:<chain id>:<sidechain txid>`. A validator
-with a parent view checks that every burn is paid within `pegoutBlocks` parent blocks and
-publishes the ones that are not. In level 1 this is the federation's promise and the
-validators' record of whether it was kept. Trust-minimised peg-out is out of scope for 0.0.1.
+A peg-out is a sidechain transaction paying a **burn output**: `OP_RETURN` with the text
+`pegout:<parent output script hex>` (a script of 2 to 40 bytes) and a value of at least
+`pegoutMin` sats from the chain document. The value leaves the sidechain's supply; a burn in
+the coinbase, a malformed script or a value below the minimum makes the block invalid
+(`sidestr:rule-pegouts`). The peg holders then pay that script that value on the parent from
+the peg outputs, the parent's fee from the same outputs, in a transaction that also carries
+`OP_RETURN` `pegout:<chain id>:` followed by the sidechain txid as 32 raw bytes, so the
+record fits the parent's data limit. A validator with a parent view checks that every burn is
+paid within `pegoutBlocks` parent blocks and publishes the ones that are not. The reference
+producer pays each burn as soon as the block holding it is on the chain, once, keeping its
+record beside the chain and reconciling it with the peg wallet's own history on start. In
+level 1 this is the federation's promise and the validators' record of whether it was kept.
+Trust-minimised peg-out is out of scope for 0.0.1.
 
 ## 8. Rules as documents
 

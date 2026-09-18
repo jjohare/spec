@@ -78,7 +78,10 @@ In order of value:
    `d` = chain id, naming its mirrors (`u` tags), so a wallet needs only a chain id: `siding
    produce --announce-mirror URL` publishes after every block; `lib/announce.mjs` builds, parses,
    finds (`findChain`) and judges (`judgeMirror`) — the explorer and wallet accept `?chain=<id>`.
-4. **Peg-out (§7).**
+4. **Peg-out (§7)** — done 18 Sep: a burn output `OP_RETURN pegout:<parent script>` (at least
+   `pegoutMin`), `siding send --pegout` / the wallet's checkbox make one, the producer running with
+   `--parent-wallet <name>` pays it on the parent from the peg wallet (`lib/parent.mjs` `payPegout`,
+   record `<dir>/pegouts.json`, reconciled with the wallet's history), `test/pegout-test.mjs`.
 5. **A second signer (level 2, §9).**
 
 Small known gaps: the producer goes solo for a few seconds after a new parent tip if its
