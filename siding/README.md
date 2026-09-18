@@ -93,7 +93,7 @@ siding key --create --chain C ; siding genesis --chain C --dir D               #
 The producer makes a block every `--interval` seconds when idle and every `--tx-interval`
 seconds while its mempool has something in it. Coinbase outputs (zero subsidy: fees only)
 mature after `coinbaseMaturity` blocks, 100 unless the overlay says otherwise. Amounts are
-always sats. Use three relays: one being down must not hide the chain.
+always sats. Use several relays (five by default: nos.lol, damus, primal, nostr.mom, nostr.oxtr.dev): one being down, or rate-limiting you, must not hide the chain.
 
 The producer's HTTP surface: `/` or `/status.json` (tip, coins, mempool, relays, announce,
 peg-ins, peg-outs), `/chain.json`, `/tip`, `/blocks.json`, `/blocks.dat` (Range requests),

@@ -3,7 +3,7 @@
 # one signer down keeps the chain going, two down halts it, one back resumes it.
 #   bash test/round-test.sh
 set -euo pipefail
-HERE=$(cd "$(dirname "$0")/.." && pwd); T=$(mktemp -d); RELAYS=${RELAYS:-wss://nos.lol,wss://relay.primal.net}; PIDS=()
+HERE=$(cd "$(dirname "$0")/.." && pwd); T=$(mktemp -d); RELAYS=${RELAYS:-wss://nos.lol,wss://relay.primal.net,wss://nostr.mom}; PIDS=()
 step() { echo; echo "=== $*"; }; fail() { echo "FAILED: $*"; kill "${PIDS[@]}" 2>/dev/null || true; exit 1; }
 cleanup() { kill "${PIDS[@]}" 2>/dev/null || true; rm -rf "$T"; }; trap cleanup EXIT
 run() { node "$HERE/bin/siding.mjs" "$@" 2>&1 | grep -v Experimental; }

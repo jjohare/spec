@@ -84,7 +84,7 @@ if (cmd === 'new') {
 next:
   1. run it (a pm2 entry, or a shell; hosts are yours, never in this repository):
      siding produce --chain ${out} --dir ${dir} --port ${port} --interval ${interval} --tx-interval 10 \\
-       --relay wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net \\
+       --relay wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net,wss://nostr.mom,wss://nostr.oxtr.dev \\
        --parent-rpc http://127.0.0.1:PORT/ --parent-cookie PATH/.cookie --parent-from HEIGHT --parent-wallet ${name}-peg \\
        --announce-mirror https://HOST/PATH/${name}
   2. mirror ${dir}/blocks.dat, blocks.json and the document as chain.json at that URL (rsync in a loop; CORS open, Range requests)
