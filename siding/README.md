@@ -75,7 +75,9 @@ In order of value:
 2. **A faucet**: a relay subscriber for kind 23501 (content: an address) that pays a small
    amount from its own funded key, one payout per address per day, capped per hour.
 3. **The tip announcement (§11)**: the signer publishes its tip in the NIP-333 shape with
-   `d` = chain id, and could name its mirrors there, so a wallet needs only a chain id.
+   `d` = chain id, naming its mirrors (`u` tags), so a wallet needs only a chain id: `siding
+   produce --announce-mirror URL` publishes after every block; `lib/announce.mjs` builds, parses,
+   finds (`findChain`) and judges (`judgeMirror`) — the explorer and wallet accept `?chain=<id>`.
 4. **Peg-out (§7).**
 5. **A second signer (level 2, §9).**
 

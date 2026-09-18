@@ -10,6 +10,8 @@
 //   siding produce ... --relay wss://a,wss://b  also follow those relays for kind 23500 transactions
 //   siding faucet --chain chain.json --url http://127.0.0.1:3450 --relay wss://a,wss://b --key-file F [--amount 100000] [--per-address-hours 24] [--per-hour 20]
 //       pay kind 23501 requests (content: an address) from this key, once per address per period, capped per hour
+//   siding produce ... --announce-mirror https://a/siding[,https://b/siding]  publish the tip (NIP-333, kind 33333, d = chain id)
+//       to the relays after every block, naming those mirrors; a client that knows only the chain id finds the chain
 //   siding produce ... --parent-rpc http://host:port/ --parent-cookie FILE [--parent-from H] [--parent-poll 60]
 //       with a parent view (SPEC 6): scan the parent for this chain's peg-ins and claim each once it has
 //       pegConfirmations; scan state in <dir>/pegins.json
@@ -24,7 +26,8 @@ import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
 import { makeParent, scanPegins, pegStatus } from '../lib/parent.mjs';
 import { buildSpend, deliver, resolveTo } from '../lib/spend.mjs';
-import { FAUCET_KIND } from '../lib/relay.mjs';
+import { FAUCET_KIND, makeEvents as mkEvents } from '../lib/relay.mjs';
+import { tipEvent, TIP_HEADERS } from '../lib/announce.mjs';
 import { Siding } from '../lib/chain.mjs';
 
 const args = Object.fromEntries(process.argv.slice(3).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
@@ -54,6 +57,16 @@ if (cmd === 'produce') {
   if (chain.challenge !== '5120' + pub) throw new Error(`the key at ${keyPath} is not the chain's signer`);
   const s = await new Siding({ engine, chain, dir, signer, log }).open(key);
   const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  // SPEC 11: announce the tip on the relays after every block, naming the mirrors
+  const mirrors = String(args['announce-mirror'] ?? '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean); let announced = -1;
+  const announce = async () => {
+    if (!relays.length || !mirrors.length) return; const tip = s.tip(); if (tip.height === announced) return;
+    const from = Math.max(0, tip.height - TIP_HEADERS + 1); const headersHex = []; for (let h = from; h <= tip.height; h++) headersHex.push(engine.k.codec.encodeHex('BlockHeader', s.node.headers[h]));
+    const ev = tipEvent({ events: mkEvents({ signer, hash: engine.hash }), key, chainId: chain.id, headersHex, tip: tip.height, mirrors });
+    const res = await publish({ relays, event: ev }); const okc = Object.values(res).filter((r) => r === 'ok').length; if (okc) announced = tip.height;
+    log(`announced tip ${tip.height} ${tip.hash.slice(0, 16)}… (kind 33333, ${headersHex.length} headers, ${mirrors.length} mirror(s)) to ${okc}/${relays.length} relay(s)`);
+  };
+  if (mirrors.length) { setInterval(() => announce().catch((e) => log(`announce: ${e.message}`)), 3000); }
   if (relays.length) subscribe({ relays, chainId: chain.id, verify: engine.nostr.verifyNostrEvent, log, onEvent: (ev, url) => {
     try { const r = s.submit(String(ev.content).trim()); log(`tx ${r.txid.slice(0, 16)}… from ${url} (event ${ev.id.slice(0, 8)}…) accepted, fee ${r.fee}`); }
     catch (e) { log(`${url}: event ${ev.id.slice(0, 8)}… refused: ${e.message}`); }
@@ -92,7 +105,7 @@ if (cmd === 'produce') {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
+    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, announce: mirrors.length ? { mirrors, announced } : null, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
     if (path === '/chain.json') return json(200, { ...chain, genesisHash: s.genesisHash });
     if (path === '/tip') return json(200, s.tip());
     if (path === '/blocks.json') return json(200, s.index);

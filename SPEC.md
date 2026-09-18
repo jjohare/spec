@@ -193,7 +193,14 @@ producer takes a base interval and a shorter one for when its mempool is not emp
 Blocks are served as the block file blaketestnode already syncs from, `[u32 height][u32
 size][block]` with a JSON index, from any mirror. Tips are published as signed events in the
 NIP-333 shape with `d` = chain id, so a node cross-checks a mirror against the signers'
-own announcement. Transactions reach a producer by `POST /tx` or as kind 23500 events on a
+own announcement: kind 33333, tags `d` and `n` = chain id, `tip` = height, `u` = a mirror's base
+URL (one tag per mirror), content = the last twelve headers as hex, signed by the signer's key.
+A client that knows only the chain id takes the newest announcement, reads `chain.json` from a
+mirror it names, and accepts that mirror when the document's `signer` is the announcement's
+author; a client that already knows the signer takes no other's. A mirror is then held to the
+announcement: the header at its tip must be the announced one, and it may be behind but never
+ahead of the signer. A chain id is a name, not a proof, so a client shows the signer it settled
+on. Transactions reach a producer by `POST /tx` or as kind 23500 events on a
 relay, content the transaction hex, tagged `chain` = chain id; relays index only single-letter
 tags, so a producer subscribes by kind and checks the tag on receipt. The event's key is
 anyone's: the transaction authorises itself. A producer includes what validates. A wallet with

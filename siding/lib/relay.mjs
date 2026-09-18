@@ -17,7 +17,7 @@ export function makeEvents({ signer, hash }) {
 // A producer's side: follow one or more relays for this chain's transactions, reconnecting with
 // backoff, and hand each verified, not-yet-seen event to onEvent. Nothing is trusted from the
 // relay: the event signature is checked, then the transaction itself must validate to be included.
-export function subscribe({ relays, chainId, verify, onEvent, log = () => {}, since = 3600, kind = TX_KIND }) {
+export function subscribe({ relays, chainId, verify, onEvent, log = () => {}, since = 3600, kind = TX_KIND, tag = 'chain' }) {
   const seen = new Set(); const sockets = new Map(); let closed = false;
   const connect = (url, backoff = 1000) => {
     if (closed) return;
@@ -31,7 +31,7 @@ export function subscribe({ relays, chainId, verify, onEvent, log = () => {}, si
       let msg; try { msg = JSON.parse(typeof m.data === 'string' ? m.data : String(m.data)); } catch { return; }
       if (msg[0] !== 'EVENT' || !msg[2] || typeof msg[2] !== 'object') return; const ev = msg[2];
       if (ev.kind !== kind || typeof ev.id !== 'string' || seen.has(ev.id)) return;
-      if (!Array.isArray(ev.tags) || !ev.tags.some((t) => Array.isArray(t) && t[0] === 'chain' && t[1] === chainId)) return; // another chain's, or untagged
+      if (!Array.isArray(ev.tags) || !ev.tags.some((t) => Array.isArray(t) && t[0] === tag && t[1] === chainId)) return; // another chain's, or untagged
       seen.add(ev.id); if (seen.size > 10000) seen.delete(seen.values().next().value);
       let ok = false; try { ok = !!verify(ev); } catch {} if (!ok) return log(`relay ${url}: event ${ev.id.slice(0, 8)}… has a bad signature`);
       onEvent(ev, url);
