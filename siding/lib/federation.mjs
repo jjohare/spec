@@ -52,3 +52,17 @@ export function assembleWitness(fed, sigs) {
 }
 // a block sealed with k of n signatures
 export function sealFederated(engine, block, fed, sigs) { return sealBlock(engine, block, assembleWitness(fed, sigs)); }
+
+// --- the peg wallet (step 6): the same k-of-n on the parent ------------------------------
+// The parent's peg output is the chain's challenge, literally: tr(<internal>, multi_a(k, …)) in a
+// node's descriptor language derives the same address. Each signer imports it with its own key
+// private (WIF), the others' public, so it can sign a PSBT that spends the peg.
+const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+export function wif({ hash }, privHex, { testnet = true } = {}) {
+  const p = new Uint8Array(34); p[0] = testnet ? 0xef : 0x80; p.set(unhex(privHex), 1); p[33] = 1; const c = hash.sha256(hash.sha256(p)); const all = new Uint8Array(38); all.set(p); all.set(c.subarray(0, 4), 34);
+  let n = BigInt('0x' + hex(all)), s = ''; while (n > 0n) { s = B58[Number(n % 58n)] + s; n /= 58n; } return s;
+}
+export function pegDescriptor(fed, { wifFor = null } = {}) {
+  const keys = fed.signers.map((pk) => (wifFor && wifFor(pk)) || pk);
+  return `tr(${fed.internalKey},multi_a(${fed.threshold},${keys.join(',')}))`;
+}

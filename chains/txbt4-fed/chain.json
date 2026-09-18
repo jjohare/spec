@@ -1,0 +1,24 @@
+{
+ "id": "sidestr:txbt4-fed",
+ "name": "txbt4-fed",
+ "parent": "btc:testnet4-blake2b",
+ "comment": "The first level 2 chain: three signers, blocks and peg-outs need two of them. Beside the BLAKE2b testnet4, ten-minute blocks. Coins with no value.",
+ "challenge": "5120f1a8fb8bd3e8274b559c35b9ccb281806f6524e712d03f8e6b9c72abd126cba6",
+ "powLimit": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+ "addressPrefix": "fd",
+ "magic": "88c2ff2f",
+ "pegConfirmations": 6,
+ "refundBlocks": 10000,
+ "pegoutBlocks": 144,
+ "pegoutMin": 10000,
+ "minFeeRate": 1,
+ "genesisTime": 1789761001,
+ "pegs": [],
+ "signers": [
+  "03f62052b1e9c56e1de806cac4004ae1d38886dc58f7321816efda8fc5bba09c",
+  "738e8977ed05a1ec5202c18737449b686fed4a707f7ef781cfb3c2febe11104c",
+  "dc82b1210128d3cdfe86149f18d52d8c11d1ca1b4d39966dbb424b199604b392"
+ ],
+ "threshold": 2,
+ "genesisHash": "60cc0715fdf5a7d350cd9a9d0dca55495c0c4d82276a2a5c15a8163b36bbcbc1"
+}

@@ -3,6 +3,8 @@
 //   siding new --name <name> --prefix <hrp> [--parent ID] [--comment ...] [--rules assets,pool] [--interval 600] [--port N] [--out FILE]
 //   siding new ... --signers pk1,pk2,pk3 --threshold 2 --key-files f1,f2   a level 2 chain: the challenge is derived, the genesis sealed by k keys
 //   siding produce ... on a level 2 chain, --key-file is one signer's key; blocks come from the round (kinds 23510/23511/23514) [--propose-after 30]
+//   siding peg-wallet --chain C --key-file F --name W --parent-rpc URL --parent-cookie FILE   this signer's node wallet for the k-of-n peg:
+//       the chain's challenge as a descriptor with this signer's key private, the others' public; peg-outs are then a PSBT round (23512/23513)
 //       a whole chain: document at chains/<name>/chain.json, signer key, genesis, and the lines to run and mirror it
 //   siding key --create [--chain chain.json]        the signer key (~/.sidestr/<name>.key) and its challenge
 //   siding genesis --chain chain.json --dir DIR     write block 0
@@ -44,7 +46,9 @@ import { FAUCET_KIND, makeEvents as mkEvents } from '../lib/relay.mjs';
 import { tipEvent, TIP_HEADERS } from '../lib/announce.mjs';
 import { Siding } from '../lib/chain.mjs';
 import { makeRound } from '../lib/round.mjs';
-import { federation, partialSignature, sealFederated } from '../lib/federation.mjs';
+import { federation, partialSignature, sealFederated, wif, pegDescriptor } from '../lib/federation.mjs';
+import { makePegoutRound } from '../lib/pegoutround.mjs';
+import { parseClaims } from '../lib/overlay.mjs';
 
 const args = Object.fromEntries(process.argv.slice(3).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
 const cmd = process.argv[2];
@@ -105,6 +109,16 @@ if (cmd === 'genesis') {
   console.log(JSON.stringify({ genesisHash: s.genesisHash, height: s.height(), coins: s.utxo.size }, null, 1)); process.exit(0);
 }
 
+if (cmd === 'peg-wallet') {
+  const fed = engine.sidestr.federation; if (!fed) throw new Error('not a federated chain'); const key = await loadKey(keyPath, { signer }); const pub = signer.pubkeyOf(key); if (!fed.signers.includes(pub)) throw new Error('this key is not one of the signers');
+  const parent = await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args.name }); const testnet = !/mainnet/.test(chain.parent);
+  const desc = pegDescriptor(fed, { wifFor: (pk) => pk === pub ? wif(engine, key, { testnet }) : null }); const info = await parent.rpc('getdescriptorinfo', [desc]);
+  try { await parent.rpc('createwallet', [args.name, false, true, '', false, true]); } catch (e) { if (!/already/.test(e.message)) throw e; }
+  const r = await parent.walletRpc('importdescriptors', [[{ desc: `${desc}#${info.checksum}`, timestamp: 'now', active: false, label: `${chain.id} peg` }]]);
+  const addr = (await parent.rpc('deriveaddresses', [`${pegDescriptor(fed)}#${(await parent.rpc('getdescriptorinfo', [pegDescriptor(fed)])).checksum}`]))[0];
+  console.log(JSON.stringify({ wallet: args.name, signer: pub, imported: r[0]?.success, pegAddress: addr, challenge: fed.challenge, note: 'the same script as the chain challenge: what pays this address on the parent is a peg-in' }, null, 1)); process.exit(0);
+}
+
 if (cmd === 'produce') {
   const key = await loadKey(keyPath, { signer }); const pub = signer.pubkeyOf(key);
   const fed = engine.sidestr.federation;
@@ -130,13 +144,18 @@ if (cmd === 'produce') {
   log(`${chain.id}: height ${s.height()} tip ${s.tip().hash.slice(0, 16)}…, ${s.utxo.size} coins`);
   const interval = Number(args.interval ?? 600) * 1000, txInterval = Number(args['tx-interval'] ?? 30) * 1000; let last = Date.now();
   // level 2: the round makes the blocks; the tick only says when one is due and whose turn it is
-  const round = fed ? makeRound({ engine: { ...engine, signer }, s, chain, fed, key, pub, relays: String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean), events: mkEvents({ signer, hash: engine.hash }), publish, subscribe, log, proposeAfter: Number(args['propose-after'] ?? 30), onBlock: () => { last = Date.now(); } }) : null;
+  const checkClaims = async (block) => { if (!parentRef.parent) return null; const { claims, errors } = parseClaims(block.transactions[0]); if (errors.length) return errors[0]; const need = chain.pegConfirmations ?? 6;
+    for (const c of claims) { if (s.claimed(c.txid, c.vout)) return `${c.txid.slice(0, 12)}… is claimed already`; const o = await parentRef.parent.rpc('gettxout', [c.txid, c.vout, true]); if (!o) return `${c.txid.slice(0, 12)}…:${c.vout} is not unspent on the parent`; if (o.confirmations < need) return `${c.txid.slice(0, 12)}… has ${o.confirmations} of ${need} confirmations`;
+      if (Math.round(o.value * 1e8) !== c.payout.value || o.scriptPubKey.hex !== fed.challenge) return `${c.txid.slice(0, 12)}… does not pay the peg ${c.payout.value} sats`; const raw = await parentRef.parent.rpc('getrawtransaction', [c.txid, true]); const { parsePegMarker } = await import('../lib/marker.mjs'); const marker = raw.vout.map((v) => parsePegMarker(v.scriptPubKey.hex, chain.id)).find(Boolean); if (marker !== c.payout.scriptPubKey) return `${c.txid.slice(0, 12)}…'s marker names ${String(marker).slice(0, 12)}…, the claim pays ${c.payout.scriptPubKey.slice(0, 12)}…`; }
+    return null; };
+  const parentRef = { parent: null };
+  const round = fed ? makeRound({ engine: { ...engine, signer }, s, chain, fed, key, pub, relays: String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean), events: mkEvents({ signer, hash: engine.hash }), publish, subscribe, log, proposeAfter: Number(args['propose-after'] ?? 30), onBlock: () => { last = Date.now(); }, checkClaims }) : null;
   if (fed) log(`level 2: signer ${fed.signers.indexOf(pub) + 1} of ${fed.signers.length}, threshold ${fed.threshold}, proposing after ${Number(args['propose-after'] ?? 30)} s when it is another signer's turn`);
   const tick = () => { const due = Date.now() - last >= (s.mempool.size ? txInterval : interval); if (fed) { round.tick({ due }).catch((e) => log(`round: ${e.message}`)); return; } if (!due) return; try { const r = s.produce(key); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… ${r.txs - 1} txs, fees ${r.fees}`); } catch (e) { log(`produce: ${e.message}`); } };
   setInterval(tick, 1000);
   // SPEC 6: with a parent view, claim confirmed peg-ins. Which outpoints are already claimed is
   // derived from the chain itself on open; only the scan position and what was found persist.
-  const parent = args['parent-rpc'] ? await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args['parent-wallet'] ?? null }) : null;
+  const parent = args['parent-rpc'] ? await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args['parent-wallet'] ?? null }) : null; parentRef.parent = parent;
   const pegFile = `${dir}/pegins.json`; let pegState = { scanned: Number(args['parent-from'] ?? 0) - 1, pegins: [] };
   try { pegState = JSON.parse(await readFile(pegFile, 'utf8')); } catch {}
   // SPEC 6.2: the desk
@@ -210,7 +229,10 @@ if (cmd === 'produce') {
       await writeFile(outFile, JSON.stringify(outState, null, 1));
     } catch (e) { log(`peg-out: ${e.message}`); } finally { paying = false; }
   };
-  if (parent?.walletRpc) { log(`parent wallet ${parent.wallet}: peg-outs for ${chain.id} are paid from it, ${Object.keys(outState.paid).length} paid so far`); setInterval(pegoutTick, Number(args['parent-poll'] ?? 60) * 1000); setTimeout(pegoutTick, 5000); }
+  const pegoutRound = fed && parent?.walletRpc ? makePegoutRound({ parent, fed, pub, key, chain, s, relays: String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean), events: mkEvents({ signer, hash: engine.hash }), publish, subscribe, log, proposeAfter: Number(args['propose-after'] ?? 30), outState, save: () => writeFile(outFile, JSON.stringify(outState, null, 1)), verifyEvent: engine.nostr.verifyNostrEvent }) : null;
+  const reconcile = async () => { try { const already = await paidPegouts(parent, { chainId: chain.id }); let changed = false; for (const b of s.pegouts()) { const k = `${b.txid}:${b.vout}`; if (!outState.paid[k] && already.has(b.txid)) { outState.paid[k] = { parentTxid: already.get(b.txid), value: b.value, script: b.script, height: b.height, at: Math.floor(Date.now() / 1000), reconciled: true }; changed = true; log(`peg-out ${k.slice(0, 16)}… was paid by the federation in ${already.get(b.txid).slice(0, 16)}…`); } } if (changed) await writeFile(outFile, JSON.stringify(outState, null, 1)); } catch (e) { log(`peg-out reconcile: ${e.message}`); } };
+  if (pegoutRound) { log(`parent wallet ${parent.wallet}: peg-outs for ${chain.id} are paid by the federation's PSBT round (${fed.threshold} of ${fed.signers.length}), ${Object.keys(outState.paid).length} paid so far`); setInterval(() => { reconcile().then(() => pegoutRound.tick()).catch((e) => log(`peg-out round: ${e.message}`)); }, Number(args['parent-poll'] ?? 60) * 1000); setTimeout(() => reconcile().then(() => pegoutRound.tick()), 8000); }
+  else if (parent?.walletRpc) { log(`parent wallet ${parent.wallet}: peg-outs for ${chain.id} are paid from it, ${Object.keys(outState.paid).length} paid so far`); setInterval(pegoutTick, Number(args['parent-poll'] ?? 60) * 1000); setTimeout(pegoutTick, 5000); }
   else if (parent) log('no --parent-wallet: peg-outs are recorded but not paid');
   // SPEC 11: checkpoints — the tip into the parent every N blocks, one OP_RETURN from the peg wallet
   const ckptEvery = Number(args['checkpoint-every'] ?? 0); const ckFile = `${dir}/checkpoints.json`;
