@@ -74,10 +74,28 @@ export class Siding {
     // producer policy, published in chain.json so a wallet can compute it: at least minFeeRate sat/vB
     const vsize = this.vsize(tx), minFee = Math.ceil(vsize * this.minFeeRate()); if (inSum - outSum < minFee) throw new Error(`fee ${inSum - outSum} is below the minimum ${minFee} sats (${vsize} vB at ${this.minFeeRate()} sat/vB)`);
     tx.inputs.forEach((_, i) => { const v = k.interpreter.verifyInput(tx, i, prevouts[i], prevouts, null, { unifiedSighash: true }); if (v.ok !== true) throw new Error(`input ${i}: ${v.error ?? v.reason ?? 'script failed'}`); });
+    // SPEC 12: the chain's extra rules, against the confirmed state (block order decides conflicts between mempool transactions)
+    const rv = this.rulesCheck(tx, txid); if (!rv.ok) throw new Error(`${rv.rule}: ${rv.error}`);
     this.mempool.set(txid, tx); for (const i of tx.inputs) this.mempoolSpent.add(keyOf(i.prevout));
     return { txid, fee: inSum - outSum, vsize };
   }
   vsize(tx) { return Math.ceil(this.k.codec.txWeight(tx) / 4); }
+  // the assets and pool rules on one transaction over a view (a fresh view = the confirmed state); the view keeps the effects when ok
+  rulesCheck(tx, txid, view = null, poolLog = null) {
+    const r = this.engine.rules; if (!r?.assets) return { ok: true };
+    view = view ?? new r.assets.CarryView(r.assets.carried);
+    const a = r.assets.check(tx, txid, view); if (!a.ok) return { ok: false, rule: 'assets', error: a.error };
+    if (r.pool) { const p = r.pool.check(tx, txid, view); if (!p.ok) return { ok: false, rule: 'pool', error: p.error }; if (p.effect && poolLog) poolLog.push(p.effect); }
+    return { ok: true };
+  }
+  // the mempool in order, each transaction checked against the state the ones before it leave; the losers are evicted
+  sequenced() {
+    const r = this.engine.rules; const txs = [...this.mempool.entries()]; if (!r?.assets) return txs.map(([, tx]) => tx);
+    const view = new r.assets.CarryView(r.assets.carried); const saved = r.pool ? new Map([...r.pool.pools].map(([k, v]) => [k, { ...v }])) : null; const savedBy = r.pool ? new Map(r.pool.byOutpoint) : null; const out = [];
+    for (const [txid, tx] of txs) { const log = []; const v = this.rulesCheck(tx, txid, view, log); if (v.ok) { out.push(tx); for (const e of log) r.pool.apply(e, null, null); } else { this.log(`mempool: ${txid.slice(0, 16)}… dropped, ${v.rule}: ${v.error}`); this.mempool.delete(txid); for (const i of tx.inputs) this.mempoolSpent.delete(keyOf(i.prevout)); } }
+    if (r.pool) { r.pool.pools.clear(); for (const [k, v] of saved) r.pool.pools.set(k, v); r.pool.byOutpoint.clear(); for (const [k, v] of savedBy) r.pool.byOutpoint.set(k, v); }
+    return out;
+  }
   pegoutMin() { return Number(this.chain.pegoutMin ?? 10000); }
   // every burn the chain has validated, oldest first (SPEC 7)
   pegouts() { return [...(this.engine.sidestr?.pegouts.values() ?? [])].sort((a, b) => a.height - b.height); }
@@ -88,7 +106,7 @@ export class Siding {
   claimed(txid, vout) { return this.engine.sidestr?.claims.has(outpointOf(txid, vout)) ?? false; }
   produce(privHex, { time = Math.floor(Date.now() / 1000), claims = [] } = {}) {
     const tip = this.tip(); const t = Math.max(time, tip.time + 1);
-    const txs = [...this.mempool.values()]; const fees = txs.reduce((s, tx) => s + this.fees(tx), 0);
+    const txs = this.sequenced(); const fees = txs.reduce((s, tx) => s + this.fees(tx), 0);
     const outputs = fees > 0 ? [{ value: fees, scriptPubKey: this.chain.challenge }] : [];
     for (const c of claims) { if (this.claimed(c.txid, c.vout)) throw new Error(`${c.txid}:${c.vout} is already claimed`); outputs.push({ value: c.amount, scriptPubKey: c.script }, { value: 0, scriptPubKey: claimMarker(c.txid, c.vout) }); }
     const b = buildBlock(this.engine, { height: tip.height + 1, prev: tip.hash, time: t, transactions: txs, outputs, bits: this.bits });

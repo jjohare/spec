@@ -26,7 +26,7 @@ The reference implementation, on the same engine as datstr and blaketestnode:
     node siding/bin/siding.mjs produce --chain C --dir D   blocks on an interval, sooner with transactions
     node siding/bin/siding.mjs sync --url URL --dir D      validate a producer's chain, no key needed
 
-Needs a checkout of bitcoin-desktop/schema (SCHEMA). The genesis is deterministic: the same
+Needs checkouts of bitcoin-desktop/schema (SCHEMA) and bitcoin-blake/blaketestnode (BLAKETESTNODE, the block-file node `lib/chain.mjs` builds on). The genesis is deterministic: the same
 chain document gives the same block 0, byte for byte.
 
 Around it: the [explorer](https://github.com/sidestr/explorer) and [wallet](https://github.com/sidestr/wallet)
