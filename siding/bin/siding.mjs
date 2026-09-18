@@ -20,6 +20,8 @@
 //   siding produce ... --announce-mirror https://a/siding[,https://b/siding]  publish the tip (NIP-333, kind 33333, d = chain id)
 //       to the relays after every block, naming those mirrors; a client that knows only the chain id finds the chain
 //   siding produce ... --parent-wallet <name>  the parent wallet holding the peg outputs: every burn is paid from it (SPEC 7)
+//   siding produce ... on a chain naming the evm rule: POST /evm is an Ethereum JSON-RPC (MetaMask, ethers, viem);
+//       eth_sendRawTransaction is carried in a sidestr transaction the signer pays for
 //   siding produce ... --checkpoint-every N [--checkpoint-wallet <name>]   every N blocks, write the tip into the parent as an OP_RETURN
 //       from that wallet (default: the peg wallet; a separate fee wallet keeps checkpoints away from peg outputs altogether)
 //       (SPEC 11 checkpoints), record <dir>/checkpoints.json; the parent's proof of work then vouches for the history
@@ -34,7 +36,7 @@ import { mkdir } from 'node:fs/promises';
 import { existsSync, statSync, createReadStream } from 'node:fs';
 import http from 'node:http';
 import { homedir } from 'node:os';
-import { loadEngine } from '../lib/engine.mjs';
+import { loadEngine, SCHEMA } from '../lib/engine.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
 import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts, lockOutputs } from '../lib/parent.mjs';
@@ -48,6 +50,7 @@ import { Siding } from '../lib/chain.mjs';
 import { makeRound } from '../lib/round.mjs';
 import { federation, partialSignature, sealFederated, wif, pegDescriptor } from '../lib/federation.mjs';
 import { makePegoutRound } from '../lib/pegoutround.mjs';
+import { makeEvmRpc } from '../lib/evmrpc.mjs';
 import { parseClaims } from '../lib/overlay.mjs';
 
 const args = Object.fromEntries(process.argv.slice(3).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
@@ -256,11 +259,24 @@ if (cmd === 'produce') {
     } catch (e) { log(`checkpoint: ${e.message}`); } finally { checkpointing = false; }
   };
   if (ckParent?.walletRpc && ckptEvery) { log(`checkpoints: every ${ckptEvery} block(s) into the parent from ${ckParent.wallet}; ${ck.checkpoints.length} so far${ck.checkpoints.length ? `, last at ${ck.checkpoints.at(-1).height}` : ''}`); setInterval(checkpointTick, 30000); setTimeout(checkpointTick, 8000); }
+  // the evm rule's JSON-RPC: raw Ethereum transactions are wrapped in a carrier the signer's coins pay for
+  const carrier = async (spk) => {
+    const me = '5120' + pub; const rate = s.minFeeRate(); const coins = s.coins(me).filter((c) => (!c.coinbase || s.height() + 1 - c.height >= s.k.params.coinbaseMaturity) && !s.mempoolSpent.has(c.outpoint)).sort((a, b) => b.value - a.value);
+    const c = coins[0]; if (!c) throw new Error('the signer has no spendable coin to carry it');
+    const [txid, vout] = c.outpoint.split(':'); const lay = (fee) => [{ value: 0, scriptPubKey: spk }, { value: c.value - fee, scriptPubKey: me }];
+    const tx = { version: 2, inputs: [{ prevout: { txid, vout: Number(vout) }, scriptSig: '', sequence: 0xfffffffd }], outputs: lay(0), lockTime: 0, witness: [] };
+    const { SIGHASH_UNIFIED } = await import(`${SCHEMA}/codec/interpreter.js`); const sized = { ...tx, witness: [['00'.repeat(65)]] }; const fee = Math.ceil(Math.ceil(engine.k.codec.txWeight(sized) / 4) * rate); tx.outputs = lay(fee);
+    const prevouts = [{ value: c.value, scriptPubKey: me }]; const ht = 0x01 | SIGHASH_UNIFIED; let m = engine.k.interpreter.sighashUnified(tx, 0, prevouts, ht, 2); if (typeof m === 'string') m = engine.hash.hexToBytes(m);
+    tx.witness = [[engine.hash.bytesToHex(signer.schnorrSign(m, key)) + ht.toString(16).padStart(2, '0')]];
+    return s.submit(engine.k.codec.encodeHex('Transaction', tx));
+  };
+  const evmRpc = engine.rules?.evm ? makeEvmRpc({ s, chain, evm: engine.rules.evm, carrier, log }) : null; if (evmRpc) log(`evm: chain id ${engine.rules.evm.chainId}, JSON-RPC at POST /evm, 1 sat = 1 gwei, reserve ${engine.rules.evm.reserve.slice(0, 12)}…`);
   const port = Number(args.port ?? 3450);
   http.createServer(async (req, res) => {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (evmRpc && path === '/evm' && req.method === 'POST') { let body = ''; for await (const c of req) { body += c; if (body.length > 1048576) { req.destroy(); return json(413, { error: 'too large' }); } } let parsed; try { parsed = JSON.parse(body); } catch { return json(400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }); } return json(200, await evmRpc(parsed)); }
     if (path === '/pegouts.json') return json(200, outState);
     if (path === '/checkpoints.json') return json(200, ck);
     if (desk && path === '/coinbases.json') return json(200, { chain: chain.id, lockedFrom: desk.policy.lockedFrom, maturity: desk.policy.maturity, coinbases: desk.coinbases });

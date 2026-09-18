@@ -270,7 +270,8 @@ status. The core above changes only when a proposal has run unchanged for a whil
 | [The desk](proposals/desk.md) | running on `sidestr:txbt4-desk` |
 | [Checkpoints](proposals/checkpoints.md) | running on `sidestr:gitmark` |
 | [Assets and pools](proposals/assets-and-pools.md) | running on `sidestr:tally`; assets between chains: draft |
-| [Level 2: several signers](proposals/level-2.md) | draft |
+| [Level 2: several signers](proposals/level-2.md) | steps 1–7 built; running on `sidestr:txbt4-fed` |
+| [The EVM as a rule](proposals/evm.md) | first milestone built; no chain yet |
 
 ## 16. Changelog
 
