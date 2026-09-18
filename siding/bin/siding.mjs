@@ -16,6 +16,8 @@
 //   siding produce ... --announce-mirror https://a/siding[,https://b/siding]  publish the tip (NIP-333, kind 33333, d = chain id)
 //       to the relays after every block, naming those mirrors; a client that knows only the chain id finds the chain
 //   siding produce ... --parent-wallet <name>  the parent wallet holding the peg outputs: every burn is paid from it (SPEC 7)
+//   siding produce ... --checkpoint-every N   with a parent wallet: every N blocks, write the tip into the parent as an OP_RETURN
+//       (SPEC 11 checkpoints), record <dir>/checkpoints.json; the parent's proof of work then vouches for the history
 //       with `pledge` in the document (SPEC 6.2): records every locked coinbase output as <dir>/coinbases.json, follows kind 33502
 //       pledges on the relays, pays the rate from the signer's coins, broadcasts each pledge at maturity, claims it to the float
 //   siding produce ... --parent-rpc http://host:port/ --parent-cookie FILE [--parent-from H] [--parent-poll 60]
@@ -30,8 +32,9 @@ import { homedir } from 'node:os';
 import { loadEngine } from '../lib/engine.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
-import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts } from '../lib/parent.mjs';
+import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts, lockOutputs } from '../lib/parent.mjs';
 import { verifyPledge, PLEDGE_KIND, maturityOf } from '../lib/pledge.mjs';
+import { sendCheckpoint, checkpointStatus, sentCheckpoints } from '../lib/checkpoint.mjs';
 import { loadParentKernel } from '../lib/engine.mjs';
 import { buildSpend, deliver, resolveTo } from '../lib/spend.mjs';
 import { FAUCET_KIND, makeEvents as mkEvents } from '../lib/relay.mjs';
@@ -136,6 +139,8 @@ if (cmd === 'produce') {
         for (const p of found) if (!pegState.pegins.some((q) => q.txid === p.txid && q.vout === p.vout)) { pegState.pegins.push(p); log(`peg-in ${p.txid.slice(0, 16)}…:${p.vout}: ${p.amount} sats to ${p.script.slice(0, 12)}…, parent h${p.height}`); }
         pegState.scanned = tip; await savePegs();
       }
+      // unclaimed peg-ins are locked in the peg wallet so no payment of ours spends them before the claim
+      await lockOutputs(parent, pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)), true);
       const claims = [], need = chain.pegConfirmations ?? 6;
       for (const p of pegState.pegins) {
         if (p.refused || s.claimed(p.txid, p.vout)) continue;
@@ -144,7 +149,7 @@ if (cmd === 'produce') {
         const pledged = desk ? pledgedByPayTxid().get(p.txid) : null;
         if (st.confirmations >= need) claims.push({ txid: p.txid, vout: p.vout, amount: p.amount, script: pledged ? chain.challenge : p.script });
       }
-      if (claims.length) { const r = s.produce(key, { claims }); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
+      if (claims.length) { const r = s.produce(key, { claims }); last = Date.now(); await lockOutputs(parent, claims, false); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
     } catch (e) { log(`parent: ${e.message}`); } finally { scanning = false; }
   };
   if (parent) { log(`parent ${args['parent-rpc']}: peg-ins for ${chain.id} from h${pegState.scanned + 1}, claim at ${chain.pegConfirmations ?? 6} confirmations`); setInterval(pegTick, Number(args['parent-poll'] ?? 60) * 1000); pegTick(); }
@@ -190,15 +195,36 @@ if (cmd === 'produce') {
   };
   if (parent?.walletRpc) { log(`parent wallet ${parent.wallet}: peg-outs for ${chain.id} are paid from it, ${Object.keys(outState.paid).length} paid so far`); setInterval(pegoutTick, Number(args['parent-poll'] ?? 60) * 1000); setTimeout(pegoutTick, 5000); }
   else if (parent) log('no --parent-wallet: peg-outs are recorded but not paid');
+  // SPEC 11: checkpoints — the tip into the parent every N blocks, one OP_RETURN from the peg wallet
+  const ckptEvery = Number(args['checkpoint-every'] ?? 0); const ckFile = `${dir}/checkpoints.json`; let ck = { chain: chain.id, every: ckptEvery, checkpoints: [] }; let checkpointing = false;
+  try { ck = JSON.parse(await readFile(ckFile, 'utf8')); ck.every = ckptEvery; } catch {}
+  const saveCk = () => writeFile(ckFile, JSON.stringify(ck, null, 1));
+  const checkpointTick = async () => {
+    if (!parent?.walletRpc || !ckptEvery || checkpointing) return; checkpointing = true;
+    try {
+      const tip = s.tip(); const last = ck.checkpoints.at(-1);
+      if (!last || tip.height - last.height >= ckptEvery) {
+        const already = await sentCheckpoints(parent, { chainId: chain.id }); const key = `${tip.height}:${tip.hash}`;
+        const parentTxid = already.get(key) ?? (await sendCheckpoint(parent, { chainId: chain.id, height: tip.height, hash: tip.hash })).parentTxid;
+        ck.checkpoints.push({ height: tip.height, hash: tip.hash, parentTxid, at: Math.floor(Date.now() / 1000), parentHeight: null, confirmations: 0 }); await saveCk();
+        log(`checkpoint ${tip.height} ${tip.hash.slice(0, 16)}… written to the parent in ${parentTxid.slice(0, 16)}…${already.has(key) ? ' (found in the wallet history)' : ''}`);
+      }
+      // where the recent ones sit on the parent now
+      let changed = false; for (const c of ck.checkpoints.slice(-20)) { if (c.confirmations >= 6) continue; const st = await checkpointStatus(parent, c.parentTxid); if (st.parentHeight !== c.parentHeight || st.confirmations !== c.confirmations) { Object.assign(c, { parentHeight: st.parentHeight, parentBlock: st.parentBlock, parentTime: st.time, confirmations: st.confirmations }); changed = true; } }
+      if (changed) await saveCk();
+    } catch (e) { log(`checkpoint: ${e.message}`); } finally { checkpointing = false; }
+  };
+  if (parent?.walletRpc && ckptEvery) { log(`checkpoints: every ${ckptEvery} block(s) into the parent from ${parent.wallet}; ${ck.checkpoints.length} so far${ck.checkpoints.length ? `, last at ${ck.checkpoints.at(-1).height}` : ''}`); setInterval(checkpointTick, 30000); setTimeout(checkpointTick, 8000); }
   const port = Number(args.port ?? 3450);
   http.createServer(async (req, res) => {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     if (path === '/pegouts.json') return json(200, outState);
+    if (path === '/checkpoints.json') return json(200, ck);
     if (desk && path === '/coinbases.json') return json(200, { chain: chain.id, lockedFrom: desk.policy.lockedFrom, maturity: desk.policy.maturity, coinbases: desk.coinbases });
     if (desk && path === '/pledges.json') return json(200, { chain: chain.id, rate: desk.policy.rate, pledges: desk.pledges });
-    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, announce: mirrors.length ? { mirrors, announced } : null, pegouts: { burned: s.pegouts().length, paid: Object.keys(outState.paid).length, min: s.pegoutMin(), payer: parent?.wallet ?? null }, desk: desk ? { rate: desk.policy.rate, maturity: desk.policy.maturity, coinbases: desk.coinbases.length, pledges: Object.keys(desk.pledges).length, paid: Object.values(desk.pledges).reduce((a, p) => a + p.paid, 0) } : null, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
+    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, minFeeRate: s.minFeeRate(), relays, announce: mirrors.length ? { mirrors, announced } : null, pegouts: { burned: s.pegouts().length, paid: Object.keys(outState.paid).length, min: s.pegoutMin(), payer: parent?.wallet ?? null }, checkpoints: ckptEvery ? { every: ckptEvery, count: ck.checkpoints.length, last: ck.checkpoints.at(-1) ?? null } : null, desk: desk ? { rate: desk.policy.rate, maturity: desk.policy.maturity, coinbases: desk.coinbases.length, pledges: Object.keys(desk.pledges).length, paid: Object.values(desk.pledges).reduce((a, p) => a + p.paid, 0) } : null, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
     if (path === '/chain.json') return json(200, { ...chain, genesisHash: s.genesisHash });
     if (path === '/tip') return json(200, s.tip());
     if (path === '/blocks.json') return json(200, s.index);

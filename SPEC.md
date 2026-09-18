@@ -292,7 +292,19 @@ relay, content the transaction hex, tagged `chain` = chain id; relays index only
 tags, so a producer subscribes by kind and checks the tag on receipt. The event's key is
 anyone's: the transaction authorises itself. A producer includes what validates. A wallet with
 nothing may publish a kind 23501 event, content an address, tagged the same way; a faucet that
-follows the relay may answer it with a payment, at its own limits. A wallet needs a mirror for blocks and a producer
+follows the relay may answer it with a payment, at its own limits.
+
+**Checkpoints.** An announcement says where the chain is; it carries no proof of work. A
+producer with a parent wallet may write its tip into the parent every `N` blocks: one
+`OP_RETURN` of `ckpt:<chain id>:` followed by the height as four little-endian bytes, `:`, and
+the 32-byte block hash (58 bytes for a 15-byte chain id). The parent block that carries it
+proves that the chain's history up to that block existed before it. The producer records each
+checkpoint beside the block file (`checkpoints.json`: height, hash, parent txid, parent block)
+and a mirror carries it; a validator checks each checkpointed hash against the block it
+validated at that height, shows every block at or below the newest confirmed checkpoint as
+anchored in the parent, and treats a mismatch as a rewritten history. A level 2 validator
+also checks that the parent transaction exists and is buried. Checkpoints bound what a
+signer can backdate; they do not order what happens between them. A wallet needs a mirror for blocks and a producer
 or relay for sending, and nothing else.
 
 ## 12. Assets and pools

@@ -1,0 +1,19 @@
+{
+ "id": "sidestr:gitmark",
+ "name": "gitmark",
+ "parent": "btc:testnet4-blake2b",
+ "comment": "gitmark: a chain for blocktrails — git commits anchored as trails of tweaked taproot outputs (git-mark.com). Marks land in seconds; every few blocks the tip is checkpointed into the BLAKE2b testnet4, so the parent's proof of work bounds when a mark was made. One signer; a faucet pays trail dust. Coins with no value.",
+ "challenge": "51207f949b860f3857174bcfc1447efa4dd7479624db2ed17844c6e12cbd9433566e",
+ "powLimit": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+ "addressPrefix": "gm",
+ "magic": "86afccb8",
+ "pegConfirmations": 6,
+ "refundBlocks": 10000,
+ "pegoutBlocks": 144,
+ "pegoutMin": 10000,
+ "minFeeRate": 1,
+ "genesisTime": 1789751309,
+ "pegs": [],
+ "signer": "7f949b860f3857174bcfc1447efa4dd7479624db2ed17844c6e12cbd9433566e",
+ "genesisHash": "53a19aa438d1ce35751419c92e4c55ea809eae0d191823388e78731fd380e569"
+}

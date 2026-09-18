@@ -53,6 +53,15 @@ export async function pegStatus(parent, { txid, vout }) {
   return { unspent: true, confirmations: o.confirmations };
 }
 
+// A peg-in that is not yet claimed must not be spent by the peg wallet's own payments (a peg-out,
+// a checkpoint) — a spent peg-in is refused as a claim. The node keeps locks in memory, so the
+// producer re-locks on every scan; a claimed output is unlocked and joins the reserve.
+export async function lockOutputs(parent, outpoints, lock = true) {
+  if (!parent.walletRpc || !outpoints.length) return 0; let n = 0;
+  for (const o of outpoints) { try { await parent.walletRpc('lockunspent', [!lock, [{ txid: o.txid, vout: o.vout }]]); n++; } catch {} }
+  return n;
+}
+
 // --- peg-outs (SPEC 7): the parent side ---------------------------------------------------
 // The parent payment carries `pegout:<chain id>:` then the sidechain txid as raw bytes (61 bytes
 // for this chain), so the record fits an OP_RETURN and a validator with a parent view can pair

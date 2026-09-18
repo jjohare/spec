@@ -19,6 +19,7 @@ local checkout in Node (`SCHEMA`, default `~/bitcoin-desktop/schema`) or from js
 | `lib/block.mjs` | building a block, the signed block data, the solution push in the coinbase |
 | `lib/parent.mjs` | the parent seen over RPC: peg-in scanning, confirmations, paying burns from the peg wallet, the wallet's own record |
 | `lib/pledge.mjs` | the desk (§6.2): build and verify a pledge — a pre-signed maturity transaction for a locked parent reward; `parentKernel` for the parent's rules in Node or a page |
+| `lib/checkpoint.mjs` | checkpoints (§11): the tip written into the parent as one OP_RETURN, the record, the parent-side send and reconciliation |
 | `lib/announce.mjs` | the tip announcement (kind 33333, `d` = chain id, `t` = sidestr, `u` = mirrors): build, parse, find a chain by id, judge a mirror |
 | `lib/relay.mjs` | Nostr: sign events, follow relays by kind and tag, publish |
 | `lib/spend.mjs` | build a spend (or a burn) from a key's coins and deliver it over the relays or `POST /tx` |
@@ -55,6 +56,9 @@ Three pages build on this, each pinned to a commit of this repository by full ha
   reward locked on the parent, against the miner's pre-signed maturity transaction (kind 33502);
   the producer records every locked coinbase output it scans (`coinbases.json`) and what it paid
   (`pledges.json`), broadcasts each pledge at maturity and claims it to the float.
+- **Checkpoints** (§11): with `--checkpoint-every N` the producer writes its tip into the parent
+  every N blocks (`checkpoints.json`, mirrored); the explorer shows every block at or below the
+  newest confirmed checkpoint as anchored in the parent and flags a rewritten history.
 - **Peg-outs** (§7): a sidechain output `OP_RETURN pegout:<parent script hex>` with a value of
   at least `pegoutMin`; the producer pays it on the parent from the peg wallet, once, with
   `pegout:<chain id>:<txid>` riding along, and keeps the record in `<dir>/pegouts.json`.
