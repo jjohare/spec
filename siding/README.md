@@ -38,6 +38,12 @@ and [wallet](https://github.com/sidestr/wallet) signs and sends from a page. The
 
 ## Running it
 
+A new chain is one command: `siding new --name <name> --prefix <hrp>` writes
+`chains/<name>/chain.json`, makes the signer key at `~/.sidestr/<name>.key`, writes genesis into
+`~/.sidestr/<name>`, and prints the `produce` line, the mirror and parent-wallet steps. The
+document is the chain's identity, so commit it; the hosts in the `produce` line are the
+operator's and stay out of this repository. `chains/` holds every chain made this way.
+
 ```
 siding key --create                         # a signer key; prints its ts1p... address
 siding genesis --chain chain.json --dir D   # only ever once per chain

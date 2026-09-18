@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // The txbt4 siding, or any sidestr chain from a chain document (SPEC 10, 11).
+//   siding new --name <name> --prefix <hrp> [--parent ID] [--comment ...] [--interval 600] [--port N] [--out FILE]
+//       a whole chain: document at chains/<name>/chain.json, signer key, genesis, and the lines to run and mirror it
 //   siding key --create [--chain chain.json]        the signer key (~/.sidestr/<name>.key) and its challenge
 //   siding genesis --chain chain.json --dir DIR     write block 0
 //   siding produce --chain chain.json --dir DIR [--port 3450] [--interval 600] [--tx-interval 30]
@@ -35,6 +37,36 @@ import { Siding } from '../lib/chain.mjs';
 const args = Object.fromEntries(process.argv.slice(3).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
 const cmd = process.argv[2];
 const log = (s) => console.log(`${new Date().toISOString().slice(11, 19)} ${s}`);
+// `siding new`: a whole chain from a name — document, signer key, genesis, and the lines to run it
+if (cmd === 'new') {
+  const name = args.name, prefix = args.prefix; if (!name || !prefix || typeof name !== 'string' || typeof prefix !== 'string') throw new Error('siding new --name <name> --prefix <bech32 hrp> [--parent btc:testnet4-blake2b] [--comment ...] [--out chains/<name>/chain.json]');
+  if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) throw new Error('a name is lower-case letters, digits and dashes'); if (!/^[a-z]{1,8}$/.test(prefix)) throw new Error('a prefix is 1 to 8 lower-case letters');
+  const out = args.out ?? new URL(`../../chains/${name}/chain.json`, import.meta.url).pathname; if (existsSync(out)) throw new Error(`${out} exists; pick another name or remove it`);
+  const magic = Array.from(new TextEncoder().encode(`sidestr:${name}`)).reduce((h, b) => ((h * 31 + b) >>> 0), 7).toString(16).padStart(8, '0');
+  const doc = { id: `sidestr:${name}`, name, parent: args.parent ?? 'btc:testnet4-blake2b', comment: args.comment ?? `A sidestr chain beside ${args.parent ?? 'btc:testnet4-blake2b'}, made ${new Date().toISOString().slice(0, 10)}. Level 1: one signer. Coins with no value.`,
+    challenge: '', powLimit: '7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', addressPrefix: prefix, magic, pegConfirmations: Number(args['peg-confirmations'] ?? 6), refundBlocks: 10000, pegoutBlocks: 144, pegoutMin: Number(args['pegout-min'] ?? 10000), minFeeRate: Number(args['min-fee-rate'] ?? 1),
+    genesisTime: Math.floor(Date.now() / 1000), pegs: [], signer: '' };
+  const eng = await loadEngine(doc); const sg = makeSigner(eng); const kp = args['key-file'] ?? `${homedir()}/.sidestr/${name}.key`; const key = await loadKey(kp, { create: true, signer: sg }); const pub = sg.pubkeyOf(key);
+  doc.challenge = '5120' + pub; doc.signer = pub;
+  const dir = args.dir ?? `${homedir()}/.sidestr/${name}`; await mkdir(dir, { recursive: true }); const engine2 = await loadEngine(doc);
+  const s = await new Siding({ engine: engine2, chain: doc, dir, signer: makeSigner(engine2), log }).open(key); doc.genesisHash = s.genesisHash;
+  await mkdir(new URL('.', 'file://' + out).pathname, { recursive: true }); await writeFile(out, JSON.stringify(doc, null, 1) + '\n');
+  const port = args.port ?? 3450, interval = args.interval ?? 600;
+  console.log(JSON.stringify({ chain: doc.id, document: out, key: kp, signer: pub, address: scriptToAddress(doc.challenge, prefix), genesisHash: doc.genesisHash, dir }, null, 1));
+  console.log(`
+next:
+  1. run it (a pm2 entry, or a shell; hosts are yours, never in this repository):
+     siding produce --chain ${out} --dir ${dir} --port ${port} --interval ${interval} --tx-interval 10 \\
+       --relay wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net \\
+       --parent-rpc http://127.0.0.1:PORT/ --parent-cookie PATH/.cookie --parent-from HEIGHT --parent-wallet ${name}-peg \\
+       --announce-mirror https://HOST/PATH/${name}
+  2. mirror ${dir}/blocks.dat, blocks.json and the document as chain.json at that URL (rsync in a loop; CORS open, Range requests)
+  3. on the parent: a wallet named ${name}-peg for the peg outputs (createwallet), and a peg-in is any output to one of its
+     addresses with OP_RETURN pegin:${doc.id}:<sidechain script bytes>; the producer claims it at ${doc.pegConfirmations} confirmations
+  4. explorer ?chain=${doc.id}, wallet ?chain=${doc.id}; the directory lists it after the first announcement
+  5. commit ${out}: the document is the chain's identity (its genesis hash is derived from it)`);
+  process.exit(0);
+}
 const chainFile = args.chain ?? new URL('../chain.json', import.meta.url).pathname;
 const chain = JSON.parse(await readFile(chainFile, 'utf8'));
 const keyPath = args['key-file'] ?? `${homedir()}/.sidestr/${chain.name}.key`;
