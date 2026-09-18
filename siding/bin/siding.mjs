@@ -7,8 +7,11 @@
 //   siding send --url http://host:3450 --chain chain.json --to <address or script> --amount <sats>
 //   siding send --relay wss://a,wss://b ...   the same, published as a kind 23500 event instead of POSTed
 //   siding produce ... --relay wss://a,wss://b  also follow those relays for kind 23500 transactions
+//   siding produce ... --parent-rpc http://host:port/ --parent-cookie FILE [--parent-from H] [--parent-poll 60]
+//       with a parent view (SPEC 6): scan the parent for this chain's peg-ins and claim each once it has
+//       pegConfirmations; scan state in <dir>/pegins.json
 import { decodeAddress, scriptToAddress } from '../lib/address.mjs';
-import { readFile } from 'node:fs/promises';
+import { writeFile, readFile } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
 import { existsSync, statSync, createReadStream } from 'node:fs';
 import http from 'node:http';
@@ -16,6 +19,7 @@ import { homedir } from 'node:os';
 import { loadEngine } from '../lib/engine.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
+import { makeParent, scanPegins, pegStatus } from '../lib/parent.mjs';
 import { Siding } from '../lib/chain.mjs';
 
 const args = Object.fromEntries(process.argv.slice(3).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] === undefined || all[i + 1].startsWith('--') ? true : all[i + 1]] : []).filter(Boolean));
@@ -53,12 +57,37 @@ if (cmd === 'produce') {
   const interval = Number(args.interval ?? 600) * 1000, txInterval = Number(args['tx-interval'] ?? 30) * 1000; let last = Date.now();
   const tick = () => { const due = Date.now() - last >= (s.mempool.size ? txInterval : interval); if (!due) return; try { const r = s.produce(key); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… ${r.txs - 1} txs, fees ${r.fees}`); } catch (e) { log(`produce: ${e.message}`); } };
   setInterval(tick, 1000);
+  // SPEC 6: with a parent view, claim confirmed peg-ins. Which outpoints are already claimed is
+  // derived from the chain itself on open; only the scan position and what was found persist.
+  const parent = args['parent-rpc'] ? await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie` }) : null;
+  const pegFile = `${dir}/pegins.json`; let pegState = { scanned: Number(args['parent-from'] ?? 0) - 1, pegins: [] };
+  try { pegState = JSON.parse(await readFile(pegFile, 'utf8')); } catch {}
+  const savePegs = () => writeFile(pegFile, JSON.stringify(pegState, null, 1)); let scanning = false;
+  const pegTick = async () => {
+    if (!parent || scanning) return; scanning = true;
+    try {
+      const tip = await parent.height();
+      if (tip > pegState.scanned) {
+        const found = await scanPegins(parent, { chainId: chain.id, from: pegState.scanned + 1, to: tip });
+        for (const p of found) if (!pegState.pegins.some((q) => q.txid === p.txid && q.vout === p.vout)) { pegState.pegins.push(p); log(`peg-in ${p.txid.slice(0, 16)}…:${p.vout}: ${p.amount} sats to ${p.script.slice(0, 12)}…, parent h${p.height}`); }
+        pegState.scanned = tip; await savePegs();
+      }
+      const claims = [], need = chain.pegConfirmations ?? 6;
+      for (const p of pegState.pegins) {
+        if (p.refused || s.claimed(p.txid, p.vout)) continue;
+        const st = await pegStatus(parent, p); if (!st.unspent) { p.refused = 'spent on the parent'; log(`peg-in ${p.txid.slice(0, 16)}…:${p.vout} is spent on the parent; not claimable`); continue; }
+        if (st.confirmations >= need) claims.push({ txid: p.txid, vout: p.vout, amount: p.amount, script: p.script });
+      }
+      if (claims.length) { const r = s.produce(key, { claims }); last = Date.now(); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
+    } catch (e) { log(`parent: ${e.message}`); } finally { scanning = false; }
+  };
+  if (parent) { log(`parent ${args['parent-rpc']}: peg-ins for ${chain.id} from h${pegState.scanned + 1}, claim at ${chain.pegConfirmations ?? 6} confirmations`); setInterval(pegTick, Number(args['parent-poll'] ?? 60) * 1000); pegTick(); }
   const port = Number(args.port ?? 3450);
   http.createServer(async (req, res) => {
     const path = req.url.split('?')[0]; const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'range, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', ...cors }); res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, relays, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
+    if (path === '/' || path === '/status.json') return json(200, { chain: chain.id, parent: chain.parent, ...s.tip(), coins: s.utxo.size, mempool: s.mempool.size, relays, pegins: parent ? { scanned: pegState.scanned, known: pegState.pegins.length, claimed: pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)).length, pending: pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)).length } : null, signer: pub, genesis: s.genesisHash, interval: interval / 1000 });
     if (path === '/chain.json') return json(200, { ...chain, genesisHash: s.genesisHash });
     if (path === '/tip') return json(200, s.tip());
     if (path === '/blocks.json') return json(200, s.index);

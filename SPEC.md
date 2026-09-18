@@ -120,13 +120,16 @@ A peg-in is a parent-chain transaction that:
 1. pays a **peg output**: a taproot output whose key path is the peg holders' key and whose
    script path is `and_v(v:pk(refund), older(refundBlocks))`, so that the pegger's refund key
    can sweep it after `refundBlocks` unspent;
-2. carries an `OP_RETURN` with `pegin:<chain id>:<sidechain output script hex>`, naming
-   where the coins appear on the sidechain.
+2. carries an `OP_RETURN` with `pegin:<chain id>:<sidechain output script>`, naming
+   where the coins appear on the sidechain. The script is written as raw bytes (61 bytes in
+   all for a taproot script, inside the 80-byte `OP_RETURN` policy limit); the hex text this
+   document shows is also accepted.
 
 After `pegConfirmations` parent confirmations, a sidechain block may **claim** it: the
-coinbase pays the named script the peg's amount, and an `OP_RETURN` output in the same
-coinbase carries `claim:<parent txid>:<vout>`. A claim of an outpoint already claimed is
-invalid. A claim of a peg-in the validator cannot see is judged by level (section 9): a
+coinbase pays the named script the peg's amount, and the very next coinbase output is an
+`OP_RETURN` carrying `claim:<parent txid>:<vout>`. That pairing is what lets a validator
+with no parent view bind each claimed amount to one outpoint: the coinbase may exceed the
+fees by exactly the paid claims. A claim of an outpoint already claimed is invalid. A claim of a peg-in the validator cannot see is judged by level (section 9): a
 level 1 validator accepts what the signers claim; a level 2 validator has a parent view and
 refuses a claim it cannot verify.
 

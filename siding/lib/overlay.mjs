@@ -3,6 +3,29 @@
 // network node and the signature rule joining btc:BlockRules. Code half: the check behind it.
 import { blockData, solutionOf, virtualTxs } from './block.mjs';
 
+// --- peg-in claims (SPEC 6) --------------------------------------------------------------
+// A claim is two consecutive coinbase outputs: the payout, then an OP_RETURN carrying
+// `claim:<parent txid>:<vout>`. The pairing is structural, so a level-1 validator, which has no
+// parent view, can still bind each claimed amount to one outpoint; a level-2 validator checks
+// the pair against the parent. Coinbase value may exceed fees by exactly the paid claims.
+const enc = new TextEncoder(), dec = new TextDecoder();
+const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const fromHex = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));
+export const outpointOf = (txid, vout) => `${txid}:${vout}`;
+export function claimMarker(txid, vout) { const d = enc.encode(`claim:${txid}:${vout}`); return '6a' + d.length.toString(16).padStart(2, '0') + toHex(d); }
+export function opReturnData(spk) { const m = /^6a(?:4c)?([0-9a-f]{2})([0-9a-f]*)$/i.exec(spk); if (!m) return null; const b = fromHex(m[2]); return parseInt(m[1], 16) === b.length ? b : null; }
+export function parseClaims(coinbase) {
+  const claims = [], errors = [];
+  coinbase.outputs.forEach((o, i) => {
+    const d = opReturnData(o.scriptPubKey); if (!d) return; let t; try { t = dec.decode(d); } catch { return; }
+    const m = /^claim:([0-9a-f]{64}):(\d{1,5})$/.exec(t); if (!m) return;
+    const payout = coinbase.outputs[i - 1];
+    if (!payout || payout.scriptPubKey.startsWith('6a') || !(payout.value > 0)) { errors.push(`claim at output ${i} has no payout before it`); return; }
+    claims.push({ index: i, txid: m[1], vout: Number(m[2]), payout: { index: i - 1, value: payout.value, scriptPubKey: payout.scriptPubKey } });
+  });
+  return { claims, errors };
+}
+
 export function sidestrGraph(chain) {
   return {
     '@id': 'sidestr:overlay', '@context': { sidestr: 'https://sidestr.com/ns#', knots: 'https://bitcoinknots.org/ns#' },
@@ -17,6 +40,8 @@ export function sidestrGraph(chain) {
         blake2bHeight: 0, blake2bHeadline: '', unifiedSighashParam: 'blake2bHeight', rdtsExpiryTime: 0,
         sidestrParent: chain.parent, sidestrChallenge: chain.challenge, sidestrPegConfirmations: chain.pegConfirmations ?? 6, sidestrRefundBlocks: chain.refundBlocks ?? 10000,
       },
+      { '@id': 'sidestr:rule-claims', '@type': 'ValidationRule', ruleSet: 'btc:BlockContextRules', label: 'claims', errorCode: 'bad-claim',
+        comment: 'Each claim:<txid>:<vout> OP_RETURN in the coinbase is immediately preceded by its payout output; no outpoint is claimed twice in the block or on the chain (SPEC 6). A level-1 validator accepts what the signers claim; a level-2 validator also checks each pair against the parent.' },
       { '@id': 'sidestr:rule-block-signature', '@type': 'ValidationRule', ruleSet: 'btc:BlockRules', label: 'block-signature', errorCode: 'bad-block-signature',
         comment: 'The coinbase witness commitment output carries, after the commitment, a push of ecc7daa2 followed by a serialized witness that satisfies the chain challenge for the block data (SPEC 4).' },
     ],
@@ -25,7 +50,28 @@ export function sidestrGraph(chain) {
 
 export const sidestrOverlay = (chain, { hash }) => ({
   graph: sidestrGraph(chain),
+  // outpoints claimed so far, by the height that claimed them. Validation is idempotent for one
+  // height (a block re-validated, or a competing block at the same height, may claim the same
+  // outpoint); a different height may not. Level 1: no reorgs, so no unwinding is needed.
+  claims: new Map(),
   installChecks({ blocks, interpreter, codec, params }) {
+    const claimed = this.claims;
+    blocks.registerChecks({ blockContext: {
+      'sidestr:rule-claims': ({ block, height }) => {
+        const { claims, errors } = parseClaims(block.transactions[0]); if (errors.length) return false;
+        const inBlock = new Set();
+        for (const c of claims) { const op = outpointOf(c.txid, c.vout); if (inBlock.has(op)) return false; inBlock.add(op); const at = claimed.get(op); if (at !== undefined && at !== height) return false; }
+        for (const op of inBlock) claimed.set(op, height);
+        return true;
+      },
+      // the kernel's rule, plus the paid claims: coinbase value <= subsidy (0) + fees + claims
+      'btc:rule-blockctx-coinbase-amount': ({ block, height, spending }) => {
+        if (spending.valueUnresolved > 0) return null;
+        const cb = block.transactions[0]; const { claims, errors } = parseClaims(cb); if (errors.length) return false;
+        const paid = claims.reduce((s, c) => s + c.payout.value, 0);
+        return cb.outputs.reduce((s, o) => s + o.value, 0) <= blocks.subsidy(height) + spending.fees + paid;
+      },
+    } });
     blocks.registerChecks({ block: {
       'sidestr:rule-block-signature': ({ block }) => {
         if (!interpreter) return null;

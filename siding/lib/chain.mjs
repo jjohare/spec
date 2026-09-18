@@ -2,6 +2,7 @@
 // format, the UTXO set replayed from it, a mempool, and block production (SPEC 4, 5, 11).
 import { BLAKETESTNODE } from './engine.mjs';
 import { buildBlock, signBlock } from './block.mjs';
+import { claimMarker, outpointOf } from './overlay.mjs';
 const { ChainNode } = await import(`${BLAKETESTNODE}/lib/node.mjs`);
 const { readIndex, writeIndex, appendBlock, readBlock } = await import(`${BLAKETESTNODE}/lib/blockfile.mjs`);
 
@@ -73,14 +74,17 @@ export class Siding {
   }
   fees(tx) { return tx.inputs.reduce((s, i) => s + this.utxo.get(keyOf(i.prevout)).output.value, 0) - tx.outputs.reduce((s, o) => s + o.value, 0); }
   // SPEC 4: a block on the tip with everything in the mempool, fees to the signer, signed
-  produce(privHex, { time = Math.floor(Date.now() / 1000) } = {}) {
+  // SPEC 6: a claim pays the peg's amount to the script the peg-in named, followed by its marker
+  claimed(txid, vout) { return this.engine.sidestr?.claims.has(outpointOf(txid, vout)) ?? false; }
+  produce(privHex, { time = Math.floor(Date.now() / 1000), claims = [] } = {}) {
     const tip = this.tip(); const t = Math.max(time, tip.time + 1);
     const txs = [...this.mempool.values()]; const fees = txs.reduce((s, tx) => s + this.fees(tx), 0);
     const outputs = fees > 0 ? [{ value: fees, scriptPubKey: this.chain.challenge }] : [];
+    for (const c of claims) { if (this.claimed(c.txid, c.vout)) throw new Error(`${c.txid}:${c.vout} is already claimed`); outputs.push({ value: c.amount, scriptPubKey: c.script }, { value: 0, scriptPubKey: claimMarker(c.txid, c.vout) }); }
     const b = buildBlock(this.engine, { height: tip.height + 1, prev: tip.hash, time: t, transactions: txs, outputs, bits: this.bits });
     const signed = signBlock({ ...this.engine, interpreter: this.k.interpreter, schnorrSign: this.signer.schnorrSign }, b, this.chain.challenge, privHex);
     const r = this.addBlock(this.k.codec.encodeHex('Block', signed));
-    return { ...r, fees };
+    return { ...r, fees, claims: claims.length };
   }
   coins(scriptPubKey) { const out = []; for (const [key, c] of this.utxo) if (c.output.scriptPubKey === scriptPubKey) out.push({ outpoint: key, value: c.output.value, height: c.height, coinbase: c.coinbase }); return out; }
 }
