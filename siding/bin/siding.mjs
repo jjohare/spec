@@ -181,6 +181,7 @@ if (cmd === 'produce') {
       }
       // unclaimed peg-ins are locked in the peg wallet so no payment of ours spends them before the claim
       await lockOutputs(parent, pegState.pegins.filter((p) => !p.refused && !s.claimed(p.txid, p.vout)), true);
+      await lockOutputs(parent, pegState.pegins.filter((p) => s.claimed(p.txid, p.vout)), false); // a claim sealed by the round (level 2) unlocks here too, not only after our own produce()
       const claims = [], need = chain.pegConfirmations ?? 6;
       for (const p of pegState.pegins) {
         if (p.refused || s.claimed(p.txid, p.vout)) continue;
@@ -189,7 +190,7 @@ if (cmd === 'produce') {
         const pledged = desk ? pledgedByPayTxid().get(p.txid) : null;
         if (st.confirmations >= need) claims.push({ txid: p.txid, vout: p.vout, amount: p.amount, script: pledged ? chain.challenge : p.script });
       }
-      if (claims.length && fed) round.wantClaims(claims);
+      if (fed) round.wantClaims(claims); // empty included: a claim sealed by another signer must leave the list, or every proposal of ours throws
       else if (claims.length) { const r = await s.produce(key, { claims }); last = Date.now(); await lockOutputs(parent, claims, false); log(`block ${r.height} ${r.hash.slice(0, 16)}… claims ${claims.length} peg-in(s): ${claims.map((c) => `${c.amount} sats to ${c.script.slice(0, 12)}…`).join(', ')}`); await savePegs(); }
     } catch (e) { log(`parent: ${e.message}`); } finally { scanning = false; }
   };

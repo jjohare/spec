@@ -27,7 +27,10 @@ export function makePegoutRound({ parent, fed, pub, key, chain, s, relays, event
   }
   async function propose(b) {
     const key_ = `${b.txid}:${b.vout}`; const want = await burnPays(b);
-    const f = await parent.walletRpc('walletcreatefundedpsbt', [[], [{ [want.address]: want.btc }, { data: want.data }], 0, { fee_rate: 1, changeAddress: (await parent.rpc('decodescript', [fed.challenge])).address }]);
+    // fee_rate 2: the wallet sizes the fee for the witness it can estimate, but a k-of-n taproot script-path spend carries k signatures,
+    // the leaf and a control block, which the estimate undercounts (a 2-of-3 payment came out at 223 sats for 274 vB and failed
+    // the 1 sat/vB relay minimum). Twice the chain's minimum leaves room for any k and n this document allows.
+    const f = await parent.walletRpc('walletcreatefundedpsbt', [[], [{ [want.address]: want.btc }, { data: want.data }], 0, { fee_rate: 2, changeAddress: (await parent.rpc('decodescript', [fed.challenge])).address }]);
     const mine = await parent.walletRpc('walletprocesspsbt', [f.psbt]);
     const ev = events.signEvent(key, { kind: PEGOUT_PSBT_KIND, tags: [['chain', chain.id], ['d', key_], ['h', String(b.height)]], content: mine.psbt });
     pending.set(key_, { id: ev.id, psbt: mine.psbt, sigs: new Map([[pub, mine.psbt]]), at: Date.now(), burn: b }); proposed.set(key_, Date.now());

@@ -20,7 +20,8 @@ export function makeRound({ engine, s, chain, fed, key, pub, relays, events, pub
   const entitled = (signer, height, at) => { const slot = fed.signers.indexOf(signer); if (slot < 0) return false; const turn = height % n; const base = dueSince ?? at; const late = Math.max(0, Math.floor((at - base) / 1000 / proposeAfter)); return ((slot - turn + n) % n) <= late; }; // never negative: another signer's clock may run a little ahead of mine
   const send = async (ev) => { const r = await publish({ relays, event: ev }); return Object.values(r).filter((x) => x === 'ok').length; };
   async function propose(opts = {}) {
-    const { block, fees, claims } = await s.buildNext({ ...opts, claims: opts.claims ?? claimsWanted }); const height = block.header.height; const hex = engine.k.codec.encodeHex('Block', block);
+    const wanted = (opts.claims ?? claimsWanted).filter((c) => !s.claimed(c.txid, c.vout)); // never propose a claim the chain already has
+    const { block, fees, claims } = await s.buildNext({ ...opts, claims: wanted }); const height = block.header.height; const hex = engine.k.codec.encodeHex('Block', block);
     const ev = events.signEvent(key, { kind: PROPOSAL_KIND, tags: [['chain', chain.id], ['h', String(height)]], content: hex });
     pending = { id: ev.id, height, block, sigs: new Map([[pub, partialSignature(E, block, fed, key)]]), at: Date.now(), fees, claims };
     signed.set(height, { id: ev.id, at: Date.now() });
