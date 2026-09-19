@@ -196,11 +196,12 @@ if (cmd === 'produce') {
   if (parent) { log(`parent ${args['parent-rpc']}: peg-ins for ${chain.id} from h${pegState.scanned + 1}, claim at ${chain.pegConfirmations ?? 6} confirmations`); setInterval(pegTick, Number(args['parent-poll'] ?? 60) * 1000); pegTick(); }
   // the desk: pledges arrive as kind 33502 events (content: the pre-signed maturity transaction, d = outpoint)
   if (desk) {
-    log(`desk: ${(desk.policy.rate * 100).toFixed(0)}% now for rewards locked from ${desk.policy.lockedFrom} until ${desk.policy.maturity}; ${Object.keys(desk.pledges).length} pledge(s) so far, ${desk.coinbases.length} locked coinbase output(s) known`);
+    log(`desk: ${(desk.policy.rate * 100).toFixed(0)}% now for rewards locked from ${desk.policy.lockedFrom} until ${desk.policy.maturity}; ${Object.keys(desk.pledges).length} pledge(s) so far, ${desk.coinbases.length} locked coinbase output(s) known${desk.policy.paused ? ' · PAUSED: no pledges accepted' : ''}`);
     let pledging = Promise.resolve();
     const onPledge = (ev, url) => { pledging = pledging.then(async () => {
       const d = ev.tags.find((t) => t[0] === 'd')?.[1] ?? ''; const [ptxid, pvout] = d.split(':'); if (!/^[0-9a-f]{64}$/.test(ptxid ?? '') || !/^\d+$/.test(pvout ?? '')) return;
       if (desk.pledges[d]) return; // one payment per reward, ever
+      if (desk.policy.paused) return log(`pledge ${d.slice(0, 16)}… from ${url}: the desk is paused (${desk.policy.pausedNote ?? 'see chain.json'})`);
       const o = await parent.rpc('gettxout', [ptxid, Number(pvout), true]); const tip = await parent.height();
       const prevout = o ? { value: Math.round(o.value * 1e8), script: o.scriptPubKey.hex, coinbase: !!o.coinbase, height: tip - o.confirmations + 1 } : null;
       const v = verifyPledge({ k: desk.k, hex: String(ev.content ?? '').trim(), chain, prevout, parentTip: tip });

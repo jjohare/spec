@@ -1,6 +1,6 @@
 # The desk: pledging a locked reward
 
-*Status: running on `sidestr:txbt4-desk` since 18 September 2026; level 1.* A proposal to the [sidestr spec](../SPEC.md); the record here is the working text, promoted into the spec once it has run unchanged for a while.
+*Status: running on `sidestr:txbt4-desk` since 18 September 2026, level 1; **paused since 19 September**: the parent's lock (Bitcoin Knots PR 419) is an open, unmerged pull request whose testnet start moved from 151,055 to 151,406 on 19 September, and no node on this network enforces it yet. Until the parent enforces the lock, a pledged reward can be spent by its miner at 100 blocks, which would invalidate the maturity transaction after the desk has paid; so `pledge.paused` is set and the producer refuses pledges. The document now also carries `enforceFrom` (151,550), the height from which nodes running the rule refuse an early spend.* A proposal to the [sidestr spec](../SPEC.md); the record here is the working text, promoted into the spec once it has run unchanged for a while.
 
 A parent may lock coinbase rewards for a long time (the BLAKE2b chains do,
 from `lockedFrom` until `maturity`). A miner who holds such a reward can still sign, today, the

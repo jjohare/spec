@@ -18,11 +18,14 @@
  "genesisHash": "06c0da1c5da3ea97e48bc1cf4ee068e926d019a019da5e5fc8da6df1e82fe47d",
  "pledge": {
   "rate": 0.9,
-  "lockedFrom": 151055,
+  "lockedFrom": 151406,
   "maturity": 158111,
   "pegAddress": "tb1ptk52cdmxkx6kulullgmwkgy0d5kv65m0s03c5r865ksxh8hfh4hqs4y7cj",
   "pegScript": "51205da8ac3766b1b56e7f9ffa36eb208f6d2ccd536f83e38a0cfaa5a06b9ee9bd6e",
   "maxPerPledge": 5100000000,
-  "fee": 1000
+  "fee": 1000,
+  "enforceFrom": 151550,
+  "paused": true,
+  "pausedNote": "Bitcoin Knots PR 419 (open, unmerged): coins from 151406 mature at 158111, enforced from 151550. Until the parent's nodes enforce it, a pledged reward can be spent by its miner at 100 blocks, so the desk accepts no pledges."
  }
 }
