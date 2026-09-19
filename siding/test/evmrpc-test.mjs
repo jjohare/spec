@@ -34,6 +34,9 @@ const init = '69602a60005260206000f3600052600a6016f3'; const h2 = await call('et
 const rc2 = await call('eth_getTransactionReceipt', [h2]); const contract = rc2?.contractAddress; t(`a deployment receipt names the contract ${contract?.slice(0, 10)}…`, /^0x[0-9a-f]{40}$/.test(contract ?? ''));
 t('eth_getCode returns the runtime', (await call('eth_getCode', [contract])) === '0x602a60005260206000f3');
 t('eth_call returns 42 and does not move the state root', (await call('eth_call', [{ to: contract, from: alice }, 'latest'])).endsWith('2a') && (await evm.rootHex()) === evm.blocks.get(s.height()).root);
+// a contract returning block.timestamp: eth_call and eth_estimateGas see the block they would land in, not a zero block (the faucet bug of 19 Sep)
+const h2b = await call('eth_sendRawTransaction', [sign({ nonce: 2, data: '0x66425f5260205ff35f5260076019f3' }, 100000)]); await s.produce(key); const tsc = (await call('eth_getTransactionReceipt', [h2b])).contractAddress;
+t('eth_call sees a real block.timestamp', Math.abs(Number(BigInt(await call('eth_call', [{ to: tsc }, 'latest']))) - Date.now() / 1000) < 120);
 const blk = await call('eth_getBlockByNumber', ['latest', false]); t('eth_getBlockByNumber latest: number, hash, one transaction, baseFee', Number(blk.number) === s.height() && blk.hash === '0x' + s.tip().hash && blk.transactions.length === 1 && blk.baseFeePerGas === '0x3b9aca00');
 t('eth_getBlockByNumber of an unknown height is null', (await call('eth_getBlockByNumber', ['0x7fffffff', false])) === null);
 let err = null; try { await call('eth_sendRawTransaction', ['0x1234']); } catch (e) { err = e; } t('a malformed raw transaction is refused with an error', err && /not a transaction/.test(err.message));
