@@ -6,7 +6,13 @@
   "description": "the sidestr specification and its reference implementation (siding); installed as a git dependency by the sidestr package",
   "repository": "github:sidestr/spec",
   "license": "AGPL-3.0-or-later",
-  "exports": { "./siding/lib/*": "./siding/lib/*", "./siding/lib/overlays/*": "./siding/lib/overlays/*", "./chains/*": "./chains/*", "./siding/chain.json": "./siding/chain.json" },
+  "exports": {
+    "./siding/lib/*": "./siding/lib/*",
+    "./siding/lib/overlays/*": "./siding/lib/overlays/*",
+    "./chains/*": "./chains/*",
+    "./siding/chain.json": "./siding/chain.json",
+    "./package.json": "./package.json"
+  },
   "dependencies": {
     "@ethereumjs/block": "10.1.3",
     "@ethereumjs/common": "10.1.3",
