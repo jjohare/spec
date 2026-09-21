@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The txbt4 siding, or any sidestr chain from a chain document (SPEC 10, 11).
-//   siding new --name <name> --prefix <hrp> [--parent ID] [--comment ...] [--rules assets,pool] [--interval 600] [--port N] [--out FILE]
+//   siding new --name <name> --prefix <hrp> [--parent txbt4|xbt|tbtc4|btc] [--comment ...] [--rules assets,pool] [--interval 600] [--port N] [--out FILE]
 //   siding new ... --signers pk1,pk2,pk3 --threshold 2 --key-files f1,f2   a level 2 chain: the challenge is derived, the genesis sealed by k keys
 //   siding produce ... on a level 2 chain, --key-file is one signer's key; blocks come from the round (kinds 23510/23511/23514) [--propose-after 30]
 //   siding peg-wallet --chain C --key-file F --name W --parent-rpc URL --parent-cookie FILE   this signer's node wallet for the k-of-n peg:
@@ -38,6 +38,7 @@ import { existsSync, statSync, createReadStream } from 'node:fs';
 import http from 'node:http';
 import { homedir } from 'node:os';
 import { loadEngine, SCHEMA } from '../lib/engine.mjs';
+import { resolveParent } from '../lib/parents.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
 import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts, lockOutputs } from '../lib/parent.mjs';
@@ -63,7 +64,7 @@ if (cmd === 'new') {
   if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) throw new Error('a name is lower-case letters, digits and dashes'); if (!/^[a-z]{1,8}$/.test(prefix)) throw new Error('a prefix is 1 to 8 lower-case letters');
   const out = args.out ?? new URL(`../../chains/${name}/chain.json`, import.meta.url).pathname; if (existsSync(out)) throw new Error(`${out} exists; pick another name or remove it`);
   const magic = Array.from(new TextEncoder().encode(`sidestr:${name}`)).reduce((h, b) => ((h * 31 + b) >>> 0), 7).toString(16).padStart(8, '0');
-  const doc = { id: `sidestr:${name}`, name, parent: args.parent ?? 'btc:testnet4-blake2b', comment: args.comment ?? `A sidestr chain beside ${args.parent ?? 'btc:testnet4-blake2b'}, made ${new Date().toISOString().slice(0, 10)}. Level 1: one signer. Coins with no value.`,
+  const doc = { id: `sidestr:${name}`, name, parent: resolveParent(args.parent ?? 'txbt4').alias, comment: args.comment ?? `A sidestr chain beside ${resolveParent(args.parent ?? 'txbt4').label}, made ${new Date().toISOString().slice(0, 10)}. Level 1: one signer. Coins with no value.`,
     challenge: '', powLimit: '7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', addressPrefix: prefix, magic, pegConfirmations: Number(args['peg-confirmations'] ?? 6), refundBlocks: 10000, pegoutBlocks: 144, pegoutMin: Number(args['pegout-min'] ?? 10000), minFeeRate: Number(args['min-fee-rate'] ?? 1),
     genesisTime: Math.floor(Date.now() / 1000), pegs: [], signer: '', ...(args.rules ? { rules: String(args.rules).split(',').map((x) => x.trim()).filter(Boolean) } : {}) };
   const eng = await loadEngine(doc); const sg = makeSigner(eng); let key = null, pub = null, kp = null, sealKeys = [];
@@ -115,7 +116,7 @@ if (cmd === 'genesis') {
 
 if (cmd === 'peg-wallet') {
   const fed = engine.sidestr.federation; if (!fed) throw new Error('not a federated chain'); const key = await loadKey(keyPath, { signer }); const pub = signer.pubkeyOf(key); if (!fed.signers.includes(pub)) throw new Error('this key is not one of the signers');
-  const parent = await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args.name }); const testnet = !/mainnet/.test(chain.parent);
+  const parent = await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args.name }); const testnet = !resolveParent(chain.parent).mainnet;
   const desc = pegDescriptor(fed, { wifFor: (pk) => pk === pub ? wif(engine, key, { testnet }) : null }); const info = await parent.rpc('getdescriptorinfo', [desc]);
   try { await parent.rpc('createwallet', [args.name, false, true, '', false, true]); } catch (e) { if (!/already/.test(e.message)) throw e; }
   const r = await parent.walletRpc('importdescriptors', [[{ desc: `${desc}#${info.checksum}`, timestamp: 'now', active: false, label: `${chain.id} peg` }]]);

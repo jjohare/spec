@@ -1,0 +1,15 @@
+import { PARENTS, parentAlias, resolveParent, isBlake2b } from '../lib/parents.mjs';
+let n = 0, f = 0; const t = (name, ok) => { n++; if (!ok) f++; console.log(`${ok ? 'ok' : 'FAIL'} ${name}`); };
+t('txbt4 resolves to the kernel id', resolveParent('txbt4').network === 'btc:testnet4-blake2b');
+t('the long spelling is the same parent', resolveParent('btc:testnet4-blake2b').alias === 'txbt4');
+t('xbt is BLAKE2b mainnet', resolveParent('xbt').network === 'btc:mainnet-blake2b' && resolveParent('btc:mainnet-blake2b').alias === 'xbt');
+t('a fork shares its origin genesis', PARENTS.xbt.genesis === PARENTS.btc.genesis && PARENTS.txbt4.genesis === PARENTS.tbtc4.genesis);
+t('fork blocks carry height and hash', PARENTS.txbt4.fork.height === 150308 && /^[0-9a-f]{64}$/.test(PARENTS.txbt4.fork.hash) && PARENTS.xbt.fork.height === 961640);
+t('header family follows the parent', isBlake2b('txbt4') && isBlake2b('xbt') && !isBlake2b('btc') && !isBlake2b('tbtc4'));
+t('xbt4 is not an alias', parentAlias('xbt4') === null);
+t('reserved parents refuse', /reserved/.test((() => { try { resolveParent('ltc'); } catch (e) { return e.message; } })()));
+t('unknown parents refuse and list the table', /unknown parent "doge".*txbt4/.test((() => { try { resolveParent('doge'); } catch (e) { return e.message; } })()));
+t('mainnet flag follows the table, not the id text', resolveParent('xbt').mainnet && resolveParent('btc').mainnet && !resolveParent('txbt4').mainnet && !resolveParent('btc:testnet4-blake2b').mainnet);
+t('prototype names are not parents', parentAlias('__proto__') === null && parentAlias('constructor') === null && parentAlias('toString') === null);
+t('non-strings are not parents', parentAlias(null) === null && parentAlias(5) === null);
+console.log(`${n - f}/${n}`); process.exit(f ? 1 : 0);
