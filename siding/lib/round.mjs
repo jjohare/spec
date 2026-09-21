@@ -4,6 +4,7 @@
 // publishes it as a kind 23514 event for the others and announces it. Signer keys are Nostr keys,
 // so an event's author is the signer. One signature per height per signer, ever.
 import { partialSignature, verifyPartial, sealFederated } from './federation.mjs';
+import { blockHeight } from './block.mjs';
 export const PROPOSAL_KIND = 23510, PARTIAL_KIND = 23511, SEALED_KIND = 23514;
 
 export function makeRound({ engine, s, chain, fed, key, pub, relays, events, publish, subscribe, log = () => {}, proposeAfter = 30, onBlock = () => {}, checkClaims = null }) {
@@ -21,7 +22,7 @@ export function makeRound({ engine, s, chain, fed, key, pub, relays, events, pub
   const send = async (ev) => { const r = await publish({ relays, event: ev }); return Object.values(r).filter((x) => x === 'ok').length; };
   async function propose(opts = {}) {
     const wanted = (opts.claims ?? claimsWanted).filter((c) => !s.claimed(c.txid, c.vout)); // never propose a claim the chain already has
-    const { block, fees, claims } = await s.buildNext({ ...opts, claims: wanted }); const height = block.header.height; const hex = engine.k.codec.encodeHex('Block', block);
+    const { block, fees, claims } = await s.buildNext({ ...opts, claims: wanted }); const height = blockHeight(block); const hex = engine.k.codec.encodeHex('Block', block);
     const ev = events.signEvent(key, { kind: PROPOSAL_KIND, tags: [['chain', chain.id], ['h', String(height)]], content: hex });
     pending = { id: ev.id, height, block, sigs: new Map([[pub, partialSignature(E, block, fed, key)]]), at: Date.now(), fees, claims };
     signed.set(height, { id: ev.id, at: Date.now() });
