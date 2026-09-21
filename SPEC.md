@@ -97,7 +97,7 @@ aliases so that no running chain's document changes; new documents use the short
 |---|---|---|---|---|
 | `btc` | Bitcoin mainnet | `000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f` | — | stock, SHA256d |
 | `tbtc4` | Bitcoin testnet4 | `00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043` | — | stock, SHA256d |
-| `xbt` | BLAKE2b mainnet (Knots) | as `btc` | 961,640 | v2, BLAKE2b, unified sighash |
+| `xbt` | BLAKE2b mainnet (Knots) | as `btc` | 961,640 `0000000000000050c1e5f69672f459293be14f46e5a494e7a8c8541396f18eeb` | v2, BLAKE2b, unified sighash |
 | `txbt4` | BLAKE2b testnet4 (Knots) | as `tbtc4` | 150,308 `000000000000b9d1b7e1bb0e77215ee92c6ef7ec8f4473e23908380649e779b6` | v2, BLAKE2b, unified sighash |
 | `ltc` | Litecoin mainnet | reserved | — | stock, scrypt |
 | `vtc` | Vertcoin mainnet | reserved | — | stock, verthash |
