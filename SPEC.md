@@ -62,9 +62,9 @@ chain's network:
 
 Everything the overlay does not set is inherited from the parent: header format and
 proof-of-work hash, script rules, weight limits, the unified sighash where the parent has it.
-A chain beside a BLAKE2b parent has BLAKE2b v2 headers; one beside stock Bitcoin has stock
-headers; one beside Litecoin, scrypt. Nothing in the document names a header format; the
-parent decides it.
+A chain beside a BLAKE2b parent has the v2 header and BLAKE2b proof of work; one beside stock
+Bitcoin has the stock header and SHA256d; one beside Litecoin has the stock header and scrypt.
+Nothing in the document names a header format or a hash; the parent decides both.
 
 ### 3.1 Nesting
 
@@ -97,12 +97,12 @@ aliases so that no running chain's document changes; new documents use the short
 |---|---|---|---|---|
 | `btc` | Bitcoin mainnet | `000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f` | — | stock, SHA256d |
 | `tbtc4` | Bitcoin testnet4 | `00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043` | — | stock, SHA256d |
-| `xbt4` | BLAKE2b mainnet (Knots) | as `btc` | 961,640 | v2, BLAKE2b, unified sighash |
+| `xbt` | BLAKE2b mainnet (Knots) | as `btc` | 961,640 | v2, BLAKE2b, unified sighash |
 | `txbt4` | BLAKE2b testnet4 (Knots) | as `tbtc4` | 150,308 `000000000000b9d1b7e1bb0e77215ee92c6ef7ec8f4473e23908380649e779b6` | v2, BLAKE2b, unified sighash |
 | `ltc` | Litecoin mainnet | reserved | — | stock, scrypt |
 | `vtc` | Vertcoin mainnet | reserved | — | stock, verthash |
 
-Old spellings: `btc:mainnet` = `btc`, `btc:testnet4` = `tbtc4`, `btc:mainnet-blake2b` = `xbt4`,
+Old spellings: `btc:mainnet` = `btc`, `btc:testnet4` = `tbtc4`, `btc:mainnet-blake2b` = `xbt`,
 `btc:testnet4-blake2b` = `txbt4`. `ltc` and `vtc` are reserved until a validator carries their
 parameters; a document naming them is refused until then.
 
@@ -214,7 +214,7 @@ peg wallet. Proposal: [proposals/level-2.md](proposals/level-2.md).
 
 ## 10. The first chain: the txbt4 siding
 
-- chain id: `sidestr:txbt4-siding`, parent `btc:testnet4-blake2b`
+- chain id: `sidestr:txbt4-siding`, parent `btc:testnet4-blake2b` (the long spelling; `txbt4` since 0.0.2)
 - genesis pegs: four outputs of 25 tBTC on the parent, made on 15 September 2026 at heights
   151,152 to 151,154, 100 tBTC in total, each with a 10,000-block refund path
 - challenge: one key, on one machine, which is also the peg holder. A test, not a federation.
@@ -305,7 +305,7 @@ status. The core above changes only when a proposal has run unchanged for a whil
   blocks; the long kernel ids stay accepted so no running chain changes. The header format and
   proof-of-work hash follow the parent (section 3), which is what every chain already did;
   this is written down because the first chain beside a stock Bitcoin parent is being built
-  (spec PR 4).
+  ([spec PR #4](https://github.com/sidestr/spec/pull/4)).
 - 2026-09-18 — the peg-out record (section 7) and the tip announcement shape (section 11)
   settled from live use; the window bound and `t` tag noted. Drafts moved to `proposals/`.
 - 2026-09-15 — 0.0.1 draft.
