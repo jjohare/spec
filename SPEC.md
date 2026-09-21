@@ -1,6 +1,6 @@
 # sidestr — user activated sidechains
 
-Version: 0.0.1, draft, 15 September 2026. Written the day the first pegs were made, before
+Version: 0.0.2, draft, 21 September 2026 (0.0.1: 15 September). Written the day the first pegs were made, before
 the first sidechain block. Nothing here is final. Field names, kinds and document shapes are
 provisional, and the numbers in section 10 describe one test chain.
 
@@ -51,7 +51,7 @@ chain's network:
 
 | parameter | meaning |
 |---|---|
-| `parent` | the parent chain id: any chain the engine validates, a sidestr chain included (section 3.1), e.g. `btc:testnet4-blake2b` |
+| `parent` | the parent chain: a short alias from the table in 3.2 (`txbt4`, `btc`, `ltc`…), or a sidestr chain id for a nested chain (section 3.1) |
 | `challenge` | a script; a block is valid when its signature satisfies it (section 4) |
 | `powLimit` | blocks must still meet this proof of work, cheap enough for a laptop, so a block costs something without keys; no retarget |
 | `subsidy` | 0 |
@@ -60,8 +60,11 @@ chain's network:
 | `refundBlocks` | the relative timelock on every peg output's refund path |
 | `genesis` | the genesis document (section 5) |
 
-Everything the overlay does not set is inherited from the parent: header format, script
-rules, weight limits, the unified sighash where the parent has it.
+Everything the overlay does not set is inherited from the parent: header format and
+proof-of-work hash, script rules, weight limits, the unified sighash where the parent has it.
+A chain beside a BLAKE2b parent has BLAKE2b v2 headers; one beside stock Bitcoin has stock
+headers; one beside Litecoin, scrypt. Nothing in the document names a header format; the
+parent decides it.
 
 ### 3.1 Nesting
 
@@ -80,6 +83,28 @@ Two consequences follow, and a child's document should state its depth:
 - **Trust compounds.** A validator of a chain at depth n trusts, for ordering and for which
   pegs exist, every signer between it and the proof-of-work root. Depth is a cost, cheap for
   tests and agents, and a reason to keep value near the root.
+
+### 3.2 Parents
+
+A parent is named by a short alias. The alias resolves, through this table, to the parameters
+a validator loads and to the block that fixes which chain is meant: the genesis, and for a fork,
+the first block on the fork's side, since a fork shares its origin's genesis. A validator that
+does not know an alias refuses the chain by name. The long ids the first chains used
+(`btc:testnet4-blake2b`, `btc:mainnet`) are the kernel's internal parameter names, accepted as
+aliases so that no running chain's document changes; new documents use the short form.
+
+| alias | chain | genesis | fork block | headers, proof of work |
+|---|---|---|---|---|
+| `btc` | Bitcoin mainnet | `000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f` | — | stock, SHA256d |
+| `tbtc4` | Bitcoin testnet4 | `00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043` | — | stock, SHA256d |
+| `xbt4` | BLAKE2b mainnet (Knots) | as `btc` | 961,640 | v2, BLAKE2b, unified sighash |
+| `txbt4` | BLAKE2b testnet4 (Knots) | as `tbtc4` | 150,308 `000000000000b9d1b7e1bb0e77215ee92c6ef7ec8f4473e23908380649e779b6` | v2, BLAKE2b, unified sighash |
+| `ltc` | Litecoin mainnet | reserved | — | stock, scrypt |
+| `vtc` | Vertcoin mainnet | reserved | — | stock, verthash |
+
+Old spellings: `btc:mainnet` = `btc`, `btc:testnet4` = `tbtc4`, `btc:mainnet-blake2b` = `xbt4`,
+`btc:testnet4-blake2b` = `txbt4`. `ltc` and `vtc` are reserved until a validator carries their
+parameters; a document naming them is refused until then.
 
 ## 4. Blocks
 
@@ -276,6 +301,11 @@ status. The core above changes only when a proposal has run unchanged for a whil
 
 ## 16. Changelog
 
+- 2026-09-21 — 0.0.2: parents are named by short alias (3.2) with a table of genesis and fork
+  blocks; the long kernel ids stay accepted so no running chain changes. The header format and
+  proof-of-work hash follow the parent (section 3), which is what every chain already did;
+  this is written down because the first chain beside a stock Bitcoin parent is being built
+  (spec PR 4).
 - 2026-09-18 — the peg-out record (section 7) and the tip announcement shape (section 11)
   settled from live use; the window bound and `t` tag noted. Drafts moved to `proposals/`.
 - 2026-09-15 — 0.0.1 draft.
