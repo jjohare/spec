@@ -9,5 +9,7 @@ t('header family follows the parent', isBlake2b('txbt4') && isBlake2b('xbt') && 
 t('xbt4 is not an alias', parentAlias('xbt4') === null);
 t('reserved parents refuse', /reserved/.test((() => { try { resolveParent('ltc'); } catch (e) { return e.message; } })()));
 t('unknown parents refuse and list the table', /unknown parent "doge".*txbt4/.test((() => { try { resolveParent('doge'); } catch (e) { return e.message; } })()));
+t('mainnet flag follows the table, not the id text', resolveParent('xbt').mainnet && resolveParent('btc').mainnet && !resolveParent('txbt4').mainnet && !resolveParent('btc:testnet4-blake2b').mainnet);
+t('prototype names are not parents', parentAlias('__proto__') === null && parentAlias('constructor') === null && parentAlias('toString') === null);
 t('non-strings are not parents', parentAlias(null) === null && parentAlias(5) === null);
 console.log(`${n - f}/${n}`); process.exit(f ? 1 : 0);

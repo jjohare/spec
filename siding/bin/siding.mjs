@@ -116,7 +116,7 @@ if (cmd === 'genesis') {
 
 if (cmd === 'peg-wallet') {
   const fed = engine.sidestr.federation; if (!fed) throw new Error('not a federated chain'); const key = await loadKey(keyPath, { signer }); const pub = signer.pubkeyOf(key); if (!fed.signers.includes(pub)) throw new Error('this key is not one of the signers');
-  const parent = await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args.name }); const testnet = !/mainnet/.test(chain.parent);
+  const parent = await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args.name }); const testnet = !resolveParent(chain.parent).mainnet;
   const desc = pegDescriptor(fed, { wifFor: (pk) => pk === pub ? wif(engine, key, { testnet }) : null }); const info = await parent.rpc('getdescriptorinfo', [desc]);
   try { await parent.rpc('createwallet', [args.name, false, true, '', false, true]); } catch (e) { if (!/already/.test(e.message)) throw e; }
   const r = await parent.walletRpc('importdescriptors', [[{ desc: `${desc}#${info.checksum}`, timestamp: 'now', active: false, label: `${chain.id} peg` }]]);
