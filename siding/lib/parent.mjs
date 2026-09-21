@@ -8,9 +8,14 @@ const fromHex = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 
 const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 export async function makeParent({ url, cookieFile, wallet = null }) {
-  const auth = 'Basic ' + Buffer.from((await readFile(cookieFile, 'utf8')).trim()).toString('base64');
-  const rpc = async (method, params = [], endpoint = url) => {
+  // the cookie is minted anew every time the node starts: read it again on a 401 rather than dying with it (a
+  // node upgrade on 21 Sep left every producer sending a stale cookie until restarted)
+  const readAuth = async () => 'Basic ' + Buffer.from((await readFile(cookieFile, 'utf8')).trim()).toString('base64');
+  let auth = await readAuth();
+  const rpc = async (method, params = [], endpoint = url, retried = false) => {
     const r = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'text/plain', authorization: auth }, body: JSON.stringify({ jsonrpc: '1.0', id: 'siding', method, params }) });
+    if (r.status === 401 && !retried) { auth = await readAuth(); return rpc(method, params, endpoint, true); }
+    if (r.status === 401) throw new Error(`${method}: the node refused the cookie at ${cookieFile}`);
     const j = await r.json(); if (j.error) throw new Error(`${method}: ${j.error.message}`); return j.result;
   };
   // the peg wallet's RPCs go to /wallet/<name>; without a wallet name the parent is read-only
