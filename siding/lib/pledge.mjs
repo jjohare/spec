@@ -4,15 +4,18 @@
 // verifies it now, pays a rate now, and broadcasts it when the height arrives. Pure: browsers
 // and Node alike; the parent's kernel comes from the caller (parentKernel below builds one).
 import { pegMarkerData } from './marker.mjs';
+import { resolveParent } from './parents.mjs';
 export const PLEDGE_KIND = 33502; // addressable, d = <parent txid>:<vout>
 const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 // a kernel for the parent network, from a schema checkout or CDN
+// `parent` is an alias or long id from SPEC 3.2; the BLAKE2b overlay is loaded only for a BLAKE2b parent
 export async function parentKernel({ cdn, parent, loadJson = async (u) => (await fetch(u)).json() }) {
-  const [{ createKernel }, { knotsBlake2b }] = await Promise.all([import(`${cdn}/codec/kernel.js`), import(`${cdn}/codec/overlays/knots-blake2b.js`)]);
-  const j = (p) => loadJson(`${cdn}/${p}`);
+  const p = resolveParent(parent); const { createKernel } = await import(`${cdn}/codec/kernel.js`);
+  const j = (q) => loadJson(`${cdn}/${q}`); const overlays = [];
+  if (p.family === 'blake2b') { const { knotsBlake2b } = await import(`${cdn}/codec/overlays/knots-blake2b.js`); overlays.push(knotsBlake2b(await j('schema/overlays/knots-blake2b.jsonld'))); }
   return createKernel({ core: await j('schema/core.jsonld'), proof: await j('schema/proof.jsonld'), script: await j('schema/script.jsonld'), chain: await j('schema/chain.jsonld'), validate: await j('schema/validate.jsonld'),
-    network: parent, overlays: [knotsBlake2b(await j('schema/overlays/knots-blake2b.jsonld'))] });
+    network: p.network, overlays });
 }
 // the maturity of a coinbase at `height` under the parent's long-maturity rule (PR 419) or the classic 100
 export function maturityOf(height, policy) { return height >= policy.lockedFrom ? policy.maturity : height + 100; }

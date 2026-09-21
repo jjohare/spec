@@ -70,7 +70,7 @@ Three pages build on this, each pinned to a commit of this repository by full ha
 A new chain is one command:
 
 ```
-siding new --name <name> --prefix <hrp> [--parent btc:testnet4-blake2b] [--comment ...] [--interval 600]
+siding new --name <name> --prefix <hrp> [--parent txbt4|xbt|tbtc4|btc] [--comment ...] [--interval 600]
 ```
 
 It writes `../chains/<name>/chain.json`, makes the signer key at `~/.sidestr/<name>.key`, writes
