@@ -18,6 +18,7 @@ const evS = tipEvent({ events, key, chainId: 'sidestr:stock', headersHex: [S(4),
 const ps = parseTip(evS);
 t('a stock-family announcement (80-byte headers) parses with the right width', !!ps && ps.headersHex.length === 2 && ps.headersHex[1] === S(5) && ps.headerBytes === 80 && p.headerBytes === 164);
 t('an empty content is rejected, not read as zero headers', parseTip({ ...ev, content: '' }) === null);
+t('more than TIP_HEADERS headers, or non-hex content, is rejected before any slicing', parseTip({ ...ev, content: H(1).repeat(13) }) === null && parseTip({ ...ev, content: S(1).repeat(13) }) === null && parseTip({ ...ev, content: 'zz'.repeat(164) }) === null && parseTip({ ...ev, content: H(1).repeat(12) }) !== null);
 const docs = { 'https://a.example/siding/chain.json': { id: chain.id, signer: 'ff'.repeat(32) }, 'https://b.example/siding/chain.json': { id: chain.id, signer: pub } };
 const found = await chooseMirror({ tip: p, chainId: chain.id, fetchJson: async (u) => { if (!(u in docs)) throw new Error('404'); return docs[u]; } });
 t('the mirror whose chain.json names the announcer is chosen, the other skipped', found.mirror === 'https://b.example/siding' && found.chain.signer === pub);
