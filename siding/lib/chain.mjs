@@ -1,7 +1,7 @@
 // A sidestr chain on disk: genesis from the chain document, a block file in blaketestnode's
 // format, the UTXO set replayed from it, a mempool, and block production (SPEC 4, 5, 11).
 import { BLAKETESTNODE } from './engine.mjs';
-import { buildBlock, signBlock } from './block.mjs';
+import { buildBlock, signBlock, blockHeight } from './block.mjs';
 import { claimMarker, outpointOf, parsePegout, parsePegouts } from './overlay.mjs';
 const { ChainNode } = await import(`${BLAKETESTNODE}/lib/node.mjs`);
 const { readIndex, writeIndex, appendBlock, readBlock } = await import(`${BLAKETESTNODE}/lib/blockfile.mjs`);
@@ -67,7 +67,7 @@ export class Siding {
   height() { return this.node.height; }
   // accept a block from elsewhere (a mirror): validated by the node, then written
   async addBlock(hex, expectHash = null) {
-    const block = this.k.codec.decode('Block', hex); const h = block.header.height;
+    const block = this.k.codec.decode('Block', hex); const h = blockHeight(block);
     const r = await this.#applyAsync(h, hex, expectHash);
     appendBlock(this.dat, this.index, h, r.hash, Buffer.from(hex, 'hex')); writeIndex(this.idx, this.index);
     return { height: h, hash: r.hash, txs: block.transactions.length };

@@ -56,10 +56,25 @@ export function virtualTxs({ codec }, data, challenge, witness = []) {
 
 // height push for the coinbase (BIP 34), then a marker
 const heightPush = (h) => { const out = []; let n = h; while (n > 0) { out.push(n & 0xff); n >>>= 8; } if (out.length && out[out.length - 1] & 0x80) out.push(0); if (!out.length) return '00'; return hex(Uint8Array.from([out.length, ...out])); };
+// the height a coinbase scriptSig pushes first (BIP 34): the inverse of heightPush. A scriptSig
+// that does not start with a height push is refused, never read as height 0: beside a stock
+// parent the coinbase is the only place the height is written.
+export function coinbaseHeight(coinbase) {
+  const sig = coinbase?.inputs?.[0]?.scriptSig ?? ''; if (!sig.length || sig.length % 2 || !/^[0-9a-f]*$/i.test(sig)) throw new Error('coinbase scriptSig is not a hex script');
+  const b = unhex(sig); const n = b[0];
+  if (n === 0) return 0; if (n >= 0x51 && n <= 0x60) return n - 0x50; // OP_0, OP_1..OP_16
+  if (n > 75 || n < 1 || b.length < 1 + n) throw new Error('coinbase scriptSig does not start with a height push');
+  if (n > 1 && b[n] === 0 && !(b[n - 1] & 0x80)) throw new Error('coinbase height push is not minimal'); // a padding byte only after a high bit
+  let h = 0; for (let i = n; i >= 1; i--) h = h * 256 + b[i]; return h;
+}
+// a block's height: the v2 header carries it; the stock header does not, so the coinbase says
+export function blockHeight(block) { return block.header.height ?? coinbaseHeight(block.transactions[0]); }
 
 // an unsigned block on `prev` with these transactions; outputs: the coinbase's, then the witness
-// commitment (the solution is appended by signBlock)
-export function buildBlock({ k, hash }, { height, prev, time, transactions, outputs, bits, marker = 'sidestr' }) {
+// commitment (the solution is appended by signBlock). The header's shape follows the parent's
+// family (SPEC 3.2, parents.mjs): the 164-byte v2 header with its BLAKE2b fields beside a BLAKE2b
+// parent, the stock 80-byte header, version with bit 31 clear, beside stock Bitcoin.
+export function buildBlock({ k, hash, parent = null }, { height, prev, time, transactions, outputs, bits, marker = 'sidestr' }) {
   const wtxids = [NULL32, ...transactions.map((t) => k.codec.wtxid(t))];
   const root = hash.hexToBytes(k.codec.merkleRoot(wtxids)).reverse(); const cat = new Uint8Array(64); cat.set(root);
   const commitment = hash.bytesToHex(hash.dsha256(cat));
@@ -67,8 +82,12 @@ export function buildBlock({ k, hash }, { height, prev, time, transactions, outp
   const coinbase = { version: 2, inputs: [{ prevout: { txid: NULL32, vout: 0xffffffff }, scriptSig: heightPush(height) + (tag.length / 2).toString(16).padStart(2, '0') + tag, sequence: 0xffffffff }],
     outputs: [...outputs, { value: 0, scriptPubKey: '6a24aa21a9ed' + commitment }], witness: [[NULL32]], lockTime: 0 };
   const txs = [coinbase, ...transactions];
-  const header = { version: 0xa0000000, prevBlockHash: prev, merkleRoot: k.codec.merkleRoot(txs.map((t) => k.codec.txid(t))), timeOnWire: time, bits, nonce: 0, nonce2: 0, nonce3: 0,
-    extranonce: '00'.repeat(16), timeOffset: 0, txCount: txs.length, flags: 0, xorKeyMaskClearBits: 0, xorKey: '00'.repeat(16), height, mmRhs: NULL32 };
+  const merkleRoot = k.codec.merkleRoot(txs.map((t) => k.codec.txid(t)));
+  const family = parent?.family ?? (k.params?.powHash === 'knots:blake2b-v2' ? 'blake2b' : 'stock');
+  const header = family === 'blake2b'
+    ? { version: 0xa0000000, prevBlockHash: prev, merkleRoot, timeOnWire: time, bits, nonce: 0, nonce2: 0, nonce3: 0,
+        extranonce: '00'.repeat(16), timeOffset: 0, txCount: txs.length, flags: 0, xorKeyMaskClearBits: 0, xorKey: '00'.repeat(16), height, mmRhs: NULL32 }
+    : { version: 0x20000000, prevBlockHash: prev, merkleRoot, time, bits, nonce: 0 };
   return { header, transactions: txs };
 }
 
