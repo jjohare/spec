@@ -12,7 +12,7 @@ export const TIP_KIND = 33333, TIP_HEADERS = 12;
 // read from the content's length without knowing the parent
 export const HEADER_HEX = [328, 160];
 // at most TIP_HEADERS headers of hex: the disambiguation above holds only within that bound, and relay content is untrusted
-export const headerWidth = (content) => (content.length > 0 && content.length <= TIP_HEADERS * HEADER_HEX[0] && /^[0-9a-f]+$/i.test(content)) ? HEADER_HEX.find((w) => content.length % w === 0) ?? null : null;
+export const headerWidth = (content) => { if (!content.length || !/^[0-9a-f]+$/i.test(content)) return null; const w = HEADER_HEX.find((x) => content.length % x === 0); return w && content.length / w <= TIP_HEADERS ? w : null; };
 
 export function tipEvent({ events, key, chainId, headersHex, tip, mirrors = [] }) {
   const start = tip - headersHex.length + 1;
