@@ -6,6 +6,12 @@
 // sidestr tag is what a directory filters on: relays index single-letter tags only.
 // Pure: browsers and Node alike. WebSocket is the platform's.
 export const TIP_KIND = 33333, TIP_HEADERS = 12;
+// a header's hex width follows the chain's parent (SPEC 3): 328 for the 164-byte v2 header beside a
+// BLAKE2b parent, 160 for the 80-byte stock header beside Bitcoin. An announcement carries at most
+// TIP_HEADERS headers, and no multiple of 160 up to 12 headers is a multiple of 328, so the width is
+// read from the content's length without knowing the parent
+export const HEADER_HEX = [328, 160];
+export const headerWidth = (content) => HEADER_HEX.find((w) => content.length > 0 && content.length % w === 0) ?? null;
 
 export function tipEvent({ events, key, chainId, headersHex, tip, mirrors = [] }) {
   const start = tip - headersHex.length + 1;
@@ -13,8 +19,8 @@ export function tipEvent({ events, key, chainId, headersHex, tip, mirrors = [] }
 }
 export function parseTip(ev) {
   const tag = (n) => (ev.tags ?? []).filter((t) => t[0] === n).map((t) => t[1]);
-  const tip = Number(tag('tip')[0]); const content = String(ev.content ?? ''); if (!Number.isInteger(tip) || content.length % 328 !== 0) return null;
-  return { chainId: tag('d')[0], tip, mirrors: tag('u').map((u) => String(u).replace(/\/+$/, '')), headersHex: content.match(/.{328}/g) ?? [], pubkey: ev.pubkey, created_at: ev.created_at, id: ev.id };
+  const tip = Number(tag('tip')[0]); const content = String(ev.content ?? ''); const w = headerWidth(content); if (!Number.isInteger(tip) || !w) return null;
+  return { chainId: tag('d')[0], tip, mirrors: tag('u').map((u) => String(u).replace(/\/+$/, '')), headersHex: content.match(new RegExp(`.{${w}}`, 'g')) ?? [], headerBytes: w / 2, pubkey: ev.pubkey, created_at: ev.created_at, id: ev.id };
 }
 
 // the newest announcement for a chain, from any of the relays, within `timeout` ms
