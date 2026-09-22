@@ -65,6 +65,7 @@ export function coinbaseHeight(coinbase) {
   if (n === 0) return 0; if (n >= 0x51 && n <= 0x60) return n - 0x50; // OP_0, OP_1..OP_16
   if (n > 75 || n < 1 || b.length < 1 + n) throw new Error('coinbase scriptSig does not start with a height push');
   if (n > 1 && b[n] === 0 && !(b[n - 1] & 0x80)) throw new Error('coinbase height push is not minimal'); // a padding byte only after a high bit
+  if (b[n] & 0x80) throw new Error('coinbase height push is negative'); // BIP34: a ScriptNum; the top bit of the last byte is the sign
   let h = 0; for (let i = n; i >= 1; i--) h = h * 256 + b[i]; return h;
 }
 // a block's height: the v2 header carries it; the stock header does not, so the coinbase says

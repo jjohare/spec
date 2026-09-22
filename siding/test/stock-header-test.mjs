@@ -20,6 +20,7 @@ t('coinbaseHeight inverts the BIP 34 height push', [0, 1, 16, 17, 127, 128, 255,
 t('an empty scriptSig is refused, not height 0', throws(() => coinbaseHeight({ inputs: [{ scriptSig: '' }] }), /not a hex script/) && throws(() => coinbaseHeight({ inputs: [] }), /not a hex script/));
 t('an odd-length scriptSig is refused', throws(() => coinbaseHeight({ inputs: [{ scriptSig: '030' }] }), /not a hex script/));
 t('a scriptSig that starts with something other than a push is refused', throws(() => coinbaseHeight(cb([0x4c, 0x01, 0x05])), /height push/) && throws(() => coinbaseHeight(cb([0x03, 0x01])), /height push/));
+t('a negative height push is refused', throws(() => coinbaseHeight(cb([0x01, 0x80])), /negative/) && throws(() => coinbaseHeight(cb([0x04, 0x00, 0x00, 0x00, 0x80])), /negative/) && coinbaseHeight(cb([0x03, 0xff, 0xff, 0x7f])) === 8388607);
 t('a non-minimal height push is refused', throws(() => coinbaseHeight(cb([0x02, 0x05, 0x00])), /not minimal/) && coinbaseHeight(cb([0x02, 0x80, 0x00])) === 128);
 
 // two throwaway chains, one per parent family: open, produce, inspect the header, replay
