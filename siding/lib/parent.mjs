@@ -28,7 +28,10 @@ export async function makeParent({ url, cookieFile, wallet = null }) {
 export { pegMarkerData, parsePegMarker } from './marker.mjs'; // pure, so a browser can build a pledge without this file's Node imports
 
 // Peg-ins in the parent's blocks [from, to]: a transaction with our marker; its peg output is the
-// first taproot output that is not the marker. Amounts in sats.
+// taproot output the peg wallet owns (SPEC 6). A wallet's change may sit before the peg, so the
+// first taproot output is taken only when no peg wallet is given to ask. Amounts in sats.
+// does the peg wallet own this parent address (its own keys, or the imported k-of-n descriptor)
+async function ownedByPegWallet(parent, address) { try { const i = await parent.walletRpc('getaddressinfo', [address]); return !!(i.ismine || i.iswatchonly || i.solvable); } catch { return false; } }
 export async function scanPegins(parent, { chainId, from, to, onBlock = () => {}, onCoinbase = null }) {
   const found = [];
   for (let h = from; h <= to; h++) {
@@ -38,7 +41,9 @@ export async function scanPegins(parent, { chainId, from, to, onBlock = () => {}
     for (const tx of block.tx) {
       let script = null; for (const o of tx.vout) { const s = parsePegMarker(o.scriptPubKey.hex, chainId); if (s) { script = s; break; } }
       if (!script) continue;
-      const peg = tx.vout.find((o) => o.scriptPubKey.type === 'witness_v1_taproot'); if (!peg) continue;
+      const taproots = tx.vout.filter((o) => o.scriptPubKey.type === 'witness_v1_taproot'); let peg = null;
+      if (parent.walletRpc) { for (const o of taproots) { if (o.scriptPubKey.address && await ownedByPegWallet(parent, o.scriptPubKey.address)) { peg = o; break; } } } else peg = taproots[0] ?? null;
+      if (!peg) continue; // a marker beside nothing the peg wallet owns is not a peg-in
       found.push({ txid: tx.txid, vout: peg.n, amount: Math.round(peg.value * 1e8), script, height: h, parentAddress: peg.scriptPubKey.address ?? null });
     }
   }

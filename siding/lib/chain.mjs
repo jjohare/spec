@@ -3,6 +3,7 @@
 import { BLAKETESTNODE } from './engine.mjs';
 import { buildBlock, signBlock, blockHeight } from './block.mjs';
 import { claimMarker, outpointOf, parsePegout, parsePegouts } from './overlay.mjs';
+import { usesUnifiedSighash } from './txsign.mjs';
 const { ChainNode } = await import(`${BLAKETESTNODE}/lib/node.mjs`);
 const { readIndex, writeIndex, appendBlock, readBlock } = await import(`${BLAKETESTNODE}/lib/blockfile.mjs`);
 
@@ -86,7 +87,7 @@ export class Siding {
       if (text.startsWith('pegout:') && !script) throw new Error('a peg-out names a parent output script of 2 to 40 bytes as hex'); if (script && o.value < this.pegoutMin()) throw new Error(`a peg-out burns at least ${this.pegoutMin()} sats`); }
     // producer policy, published in chain.json so a wallet can compute it: at least minFeeRate sat/vB
     const vsize = this.vsize(tx), minFee = Math.ceil(vsize * this.minFeeRate()); if (inSum - outSum < minFee) throw new Error(`fee ${inSum - outSum} is below the minimum ${minFee} sats (${vsize} vB at ${this.minFeeRate()} sat/vB)`);
-    tx.inputs.forEach((_, i) => { const v = k.interpreter.verifyInput(tx, i, prevouts[i], prevouts, null, { unifiedSighash: true }); if (v.ok !== true) throw new Error(`input ${i}: ${v.error ?? v.reason ?? 'script failed'}`); });
+    tx.inputs.forEach((_, i) => { const v = k.interpreter.verifyInput(tx, i, prevouts[i], prevouts, null, { unifiedSighash: usesUnifiedSighash(k) }); if (v.ok !== true) throw new Error(`input ${i}: ${v.error ?? v.reason ?? 'script failed'}`); });
     // SPEC 12: the chain's extra rules, against the confirmed state (block order decides conflicts between mempool transactions)
     const rv = this.rulesCheck(tx, txid); if (!rv.ok) throw new Error(`${rv.rule}: ${rv.error}`);
     if (this.evm) { const ev = await this.evm.checkTx(tx, txid, { height: this.height() + 1 }); if (!ev.ok) throw new Error(`evm: ${ev.error}`); }

@@ -2,6 +2,7 @@
 // unified-sighash transaction the wallet builds, with the fee sized at the chain's minimum
 // rate unless one is given. Node only (reads the schema from disk); the CLI and the faucet share it.
 import { homedir } from 'node:os';
+import { signKeyPath } from './txsign.mjs';
 import { decodeAddress, scriptToAddress } from './address.mjs';
 import { makeEvents, publish } from './relay.mjs';
 import { pegoutMarker } from './overlay.mjs';
@@ -30,8 +31,7 @@ export async function buildSpend({ engine, chain, signer, key, url, to, amount, 
   const tx = { version: 2, inputs: picked.map((c) => ({ prevout: { txid: c.outpoint.split(':')[0], vout: Number(c.outpoint.split(':')[1]) }, scriptSig: '', sequence: 0xfffffffd })), outputs: lay(fee ?? 0), lockTime: 0, witness: [] };
   if (fee == null) { const sized = { ...tx, witness: tx.inputs.map(() => ['00'.repeat(65)]) }; fee = Math.ceil(Math.ceil(k.codec.txWeight(sized) / 4) * rate); tx.outputs = lay(fee); if (sum - amount - fee < 0) throw new Error(`insufficient coins for ${amount} plus the ${fee}-sat minimum fee`); }
   const prevouts = picked.map((c) => ({ value: c.value, scriptPubKey: spk }));
-  const { SIGHASH_UNIFIED } = await import(`${process.env.SCHEMA ?? homedir() + '/bitcoin-desktop/schema'}/codec/interpreter.js`);
-  tx.witness = tx.inputs.map((_, i) => { const ht = 0x01 | SIGHASH_UNIFIED; let m = k.interpreter.sighashUnified(tx, i, prevouts, ht, 2); if (typeof m === 'string') m = engine.hash.hexToBytes(m); return [engine.hash.bytesToHex(signer.schnorrSign(m, key)) + ht.toString(16).padStart(2, '0')]; });
+  signKeyPath({ k, hash: engine.hash, signer }, tx, prevouts, key); // the sighash follows the parent's family (SPEC 3)
   return { tx, hex: k.codec.encodeHex('Transaction', tx), txid: k.codec.txid(tx), inputs: picked.length, amount, fee, vsize: Math.ceil(k.codec.txWeight(tx) / 4), change: sum - amount - fee, note: dest.note };
 }
 

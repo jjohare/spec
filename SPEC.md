@@ -1,6 +1,6 @@
 # sidestr — user activated sidechains
 
-Version: 0.0.2, draft, 21 September 2026 (0.0.1: 15 September). Written the day the first pegs were made, before
+Version: 0.0.3, draft, 23 September 2026 (0.0.2: 21 September; 0.0.1: 15 September). Written the day the first pegs were made, before
 the first sidechain block. Nothing here is final. Field names, kinds and document shapes are
 provisional, and the numbers in section 10 describe one test chain.
 
@@ -64,7 +64,11 @@ Everything the overlay does not set is inherited from the parent: header format 
 proof-of-work hash, script rules, weight limits, the unified sighash where the parent has it.
 A chain beside a BLAKE2b parent has the v2 header and BLAKE2b proof of work; one beside stock
 Bitcoin has the stock header and SHA256d; one beside Litecoin has the stock header and scrypt.
-Nothing in the document names a header format or a hash; the parent decides both.
+Nothing in the document names a header format or a hash; the parent decides both. The same
+goes for how a transaction is signed: beside a BLAKE2b parent an input's signature commits to the
+unified sighash (hash type `0x21`), beside stock Bitcoin to BIP 341's (`0x01`); a wallet reads the
+family from the chain's parent and a producer checks a transaction under that rule before it
+enters the mempool, not only in a block.
 
 ### 3.1 Nesting
 
@@ -147,7 +151,10 @@ A peg-in is a parent-chain transaction that:
    script path is `and_v(v:pk(refund), older(refundBlocks))`, so that the pegger's refund key
    can sweep it after `refundBlocks` unspent;
 2. carries an `OP_RETURN` with `pegin:<chain id>:<sidechain output script>`, naming
-   where the coins appear on the sidechain. The script is written as raw bytes (61 bytes in
+   where the coins appear on the sidechain. The peg output is the taproot output the peg
+   holders own (level 1: the producer's parent wallet; level 2: the challenge script), at any
+   position: a wallet may place its change before it. A marker transaction that pays the peg
+   holders nothing is not a peg-in. The script is written as raw bytes (61 bytes in
    all for a taproot script, inside the 80-byte `OP_RETURN` policy limit); the hex text this
    document shows is also accepted.
 
@@ -301,6 +308,11 @@ status. The core above changes only when a proposal has run unchanged for a whil
 
 ## 16. Changelog
 
+- 2026-09-23 — 0.0.3: the peg output is the one the peg holders own, at any position (6);
+  0.0.1 and 0.0.2 took the first taproot output, which misread a wallet's change as the peg.
+  Signatures follow the parent's family (3): unified beside BLAKE2b, BIP 341 beside stock
+  Bitcoin, and the producer's mempool checks under that rule. Both found by the first chain
+  beside stock testnet4, which ran a full peg-in, trade, peg-out loop.
 - 2026-09-21 — 0.0.2: parents are named by short alias (3.2) with a table of genesis and fork
   blocks; the long kernel ids stay accepted so no running chain changes. The header format and
   proof-of-work hash follow the parent (section 3), which is what every chain already did;

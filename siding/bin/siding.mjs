@@ -39,6 +39,7 @@ import http from 'node:http';
 import { homedir } from 'node:os';
 import { loadEngine, SCHEMA } from '../lib/engine.mjs';
 import { resolveParent } from '../lib/parents.mjs';
+import { signKeyPath, usesUnifiedSighash } from '../lib/txsign.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
 import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
 import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts, lockOutputs } from '../lib/parent.mjs';
@@ -269,9 +270,8 @@ if (cmd === 'produce') {
     const c = coins[0]; if (!c) throw new Error('the signer has no spendable coin to carry it');
     const [txid, vout] = c.outpoint.split(':'); const lay = (fee) => [{ value: 0, scriptPubKey: spk }, { value: c.value - fee, scriptPubKey: me }];
     const tx = { version: 2, inputs: [{ prevout: { txid, vout: Number(vout) }, scriptSig: '', sequence: 0xfffffffd }], outputs: lay(0), lockTime: 0, witness: [] };
-    const { SIGHASH_UNIFIED } = await import(`${SCHEMA}/codec/interpreter.js`); const sized = { ...tx, witness: [['00'.repeat(65)]] }; const fee = Math.ceil(Math.ceil(engine.k.codec.txWeight(sized) / 4) * rate); tx.outputs = lay(fee);
-    const prevouts = [{ value: c.value, scriptPubKey: me }]; const ht = 0x01 | SIGHASH_UNIFIED; let m = engine.k.interpreter.sighashUnified(tx, 0, prevouts, ht, 2); if (typeof m === 'string') m = engine.hash.hexToBytes(m);
-    tx.witness = [[engine.hash.bytesToHex(signer.schnorrSign(m, key)) + ht.toString(16).padStart(2, '0')]];
+    const sized = { ...tx, witness: [['00'.repeat(65)]] }; const fee = Math.ceil(Math.ceil(engine.k.codec.txWeight(sized) / 4) * rate); tx.outputs = lay(fee);
+    signKeyPath({ k: engine.k, hash: engine.hash, signer }, tx, [{ value: c.value, scriptPubKey: me }], key); // sighash by the parent's family
     return s.submit(engine.k.codec.encodeHex('Transaction', tx));
   };
   const evmRpc = engine.rules?.evm ? makeEvmRpc({ s, chain, evm: engine.rules.evm, carrier, log }) : null; if (evmRpc) log(`evm: chain id ${engine.rules.evm.chainId}, JSON-RPC at POST /evm, 1 sat = 1 gwei, reserve ${engine.rules.evm.reserve.slice(0, 12)}…`);
