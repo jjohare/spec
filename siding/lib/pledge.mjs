@@ -5,6 +5,7 @@
 // and Node alike; the parent's kernel comes from the caller (parentKernel below builds one).
 import { pegMarkerData } from './marker.mjs';
 import { resolveParent } from './parents.mjs';
+import { signKeyPath } from './txsign.mjs';
 export const PLEDGE_KIND = 33502; // addressable, d = <parent txid>:<vout>
 const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
@@ -27,9 +28,7 @@ export function buildPledge({ k, hash, signer, SIGHASH_UNIFIED, key, chain, rewa
   if (reward.script !== mine) throw new Error(`this key does not own the reward (its script is ${reward.script.slice(0, 12)}…, the key's is ${mine.slice(0, 12)}…)`);
   const fee = p.fee ?? 1000; if (!(reward.value > fee)) throw new Error('reward too small');
   const tx = { version: 2, inputs: [{ prevout: { txid: reward.txid, vout: reward.vout }, scriptSig: '', sequence: 0xfffffffe }], outputs: [{ value: reward.value - fee, scriptPubKey: p.pegScript }, { value: 0, scriptPubKey: markerScript(chain.id, payeeScript) }], lockTime: maturityOf(reward.height, p), witness: [] };
-  const prevouts = [{ value: reward.value, scriptPubKey: reward.script }]; const ht = 0x01 | SIGHASH_UNIFIED;
-  let m = k.interpreter.sighashUnified(tx, 0, prevouts, ht, 2); if (typeof m === 'string') m = hash.hexToBytes(m);
-  tx.witness = [[hash.bytesToHex(signer.schnorrSign(m, key)) + ht.toString(16).padStart(2, '0')]];
+  signKeyPath({ k, hash, signer }, tx, [{ value: reward.value, scriptPubKey: reward.script }], key); // the parent's sighash family (SPEC 3)
   return { tx, hex: k.codec.encodeHex('Transaction', tx), txid: k.codec.txid(tx), lockTime: tx.lockTime, amount: reward.value, pays: Math.floor(reward.value * p.rate) };
 }
 // what the desk checks before paying: `prevout` is the reward as the parent reports it now

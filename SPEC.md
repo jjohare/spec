@@ -1,6 +1,6 @@
 # sidestr — user activated sidechains
 
-Version: 0.0.3, draft, 23 September 2026 (0.0.2: 21 September; 0.0.1: 15 September). Written the day the first pegs were made, before
+Version: 0.0.4, draft, 24 September 2026 (0.0.3: 23 September; 0.0.2: 21 September; 0.0.1: 15 September). Written the day the first pegs were made, before
 the first sidechain block. Nothing here is final. Field names, kinds and document shapes are
 provisional, and the numbers in section 10 describe one test chain.
 
@@ -154,7 +154,10 @@ A peg-in is a parent-chain transaction that:
    where the coins appear on the sidechain. The peg output is the taproot output the peg
    holders own (level 1: the producer's parent wallet; level 2: the challenge script), at any
    position: a wallet may place its change before it. A marker transaction that pays the peg
-   holders nothing is not a peg-in. The script is written as raw bytes (61 bytes in
+   holders nothing is not a peg-in. The signer announces the script a peg-in should pay with
+   every tip (`peg` tag, section 11): level 2 the challenge, level 1 one address of the producer's
+   parent wallet, kept for the chain's life unless rotated. An output paying the announced
+   script is the peg wherever it sits, so a wallet builds a peg-in from the announcement alone. The script is written as raw bytes (61 bytes in
    all for a taproot script, inside the 80-byte `OP_RETURN` policy limit); the hex text this
    document shows is also accepted.
 
@@ -244,7 +247,8 @@ size][block]` with a JSON index, from any mirror. Tips are published as signed e
 NIP-333 shape with `d` = chain id, so a node cross-checks a mirror against the signers'
 own announcement: kind 33333, tags `d` and `n` = chain id, `t` = `sidestr` (so a directory can
 ask a relay for every sidestr chain at once), `tip` = height, `u` = a mirror's base URL (one tag
-per mirror), content = the last twelve headers as hex, signed by the signer's key.
+per mirror), `peg` = the parent output script a peg-in pays (section 6; optional, the newest
+announcement's wins), content = the last twelve headers as hex, signed by the signer's key.
 A client that knows only the chain id takes the newest announcement, reads `chain.json` from a
 mirror it names, and accepts that mirror when the document's `signer` is the announcement's
 author; a client that already knows the signer takes no other's. A mirror is then held to the
@@ -308,6 +312,10 @@ status. The core above changes only when a proposal has run unchanged for a whil
 
 ## 16. Changelog
 
+- 2026-09-24 — 0.0.4: the signer announces the peg script with every tip (`peg` tag, 11) and
+  the scanner takes the output paying it first (6): a wallet can peg in from a browser key with
+  nothing but the announcement, and a third party can tell peg from change. The desk's pledge
+  signs by the parent's family like every other transaction.
 - 2026-09-23 — 0.0.3: the peg output is the one the peg holders own, at any position (6);
   0.0.1 and 0.0.2 took the first taproot output, which misread a wallet's change as the peg.
   Signatures follow the parent's family (3): unified beside BLAKE2b, BIP 341 beside stock

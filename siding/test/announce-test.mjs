@@ -17,6 +17,8 @@ const S = (i) => (i.toString(16).padStart(2, '0')).repeat(80); // an 80-byte sto
 const evS = tipEvent({ events, key, chainId: 'sidestr:stock', headersHex: [S(4), S(5)], tip: 1, mirrors: ['https://c.example/siding'] });
 const ps = parseTip(evS);
 t('a stock-family announcement (80-byte headers) parses with the right width', !!ps && ps.headersHex.length === 2 && ps.headersHex[1] === S(5) && ps.headerBytes === 80 && p.headerBytes === 164);
+const evP = tipEvent({ events, key, chainId: chain.id, headersHex: [H(9)], tip: 9, mirrors: ['https://a.example/siding'], pegScript: '5120' + 'AB'.repeat(32) }); const pp = parseTip(evP);
+t('the peg script rides in the announcement (lower-cased) and parses back; absent otherwise', pp.pegScript === '5120' + 'ab'.repeat(32) && p.pegScript === null && (() => { try { tipEvent({ events, key, chainId: chain.id, headersHex: [H(9)], tip: 9, pegScript: 'zz' }); return false; } catch { return true; } })());
 t('an empty content is rejected, not read as zero headers', parseTip({ ...ev, content: '' }) === null);
 t('more than TIP_HEADERS headers, or non-hex content, is rejected before any slicing', parseTip({ ...ev, content: H(1).repeat(13) }) === null && parseTip({ ...ev, content: S(1).repeat(13) }) === null && parseTip({ ...ev, content: 'zz'.repeat(164) }) === null && parseTip({ ...ev, content: H(1).repeat(12) }) !== null);
 const docs = { 'https://a.example/siding/chain.json': { id: chain.id, signer: 'ff'.repeat(32) }, 'https://b.example/siding/chain.json': { id: chain.id, signer: pub } };

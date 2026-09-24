@@ -133,11 +133,14 @@ if (cmd === 'produce') {
   const relays = String(args.relay ?? '').split(',').map((x) => x.trim()).filter(Boolean);
   // SPEC 11: announce the tip on the relays after every block, naming the mirrors
   const mirrors = String(args['announce-mirror'] ?? '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean); let announced = -1;
+  // SPEC 6: the script a peg-in pays, announced with every tip. Level 2: the challenge (the k-of-n script). Level 1: one
+  // labelled address in the peg wallet, looked up once the parent is open (below), then the tip is re-announced with it.
+  let pegScript = fed ? chain.challenge.toLowerCase() : null;
   let announceRetryAt = 0, announcing = false; // a failed announcement is retried a minute later; one in flight at a time
   const announce = async () => {
     if (!relays.length || !mirrors.length || announcing) return; const tip = s.tip(); if (tip.height === announced || Date.now() < announceRetryAt) return; announcing = true; try {
     const from = Math.max(0, tip.height - TIP_HEADERS + 1); const headersHex = []; for (let h = from; h <= tip.height; h++) headersHex.push(engine.k.codec.encodeHex('BlockHeader', s.node.headers[h]));
-    const ev = tipEvent({ events: mkEvents({ signer, hash: engine.hash }), key, chainId: chain.id, headersHex, tip: tip.height, mirrors });
+    const ev = tipEvent({ events: mkEvents({ signer, hash: engine.hash }), key, chainId: chain.id, headersHex, tip: tip.height, mirrors, pegScript });
     const res = await publish({ relays, event: ev }); const okc = Object.values(res).filter((r) => r === 'ok').length; if (okc) announced = tip.height; else announceRetryAt = Date.now() + 60000;
     log(`announced tip ${tip.height} ${tip.hash.slice(0, 16)}… (kind 33333, ${headersHex.length} headers, ${mirrors.length} mirror(s)) to ${okc}/${relays.length} relay(s)`);
     } finally { announcing = false; }
@@ -165,6 +168,7 @@ if (cmd === 'produce') {
   const parent = args['parent-rpc'] ? await makeParent({ url: args['parent-rpc'], cookieFile: args['parent-cookie'] ?? `${homedir()}/.bitcoin/.cookie`, wallet: args['parent-wallet'] ?? null }) : null; parentRef.parent = parent;
   const pegFile = `${dir}/pegins.json`; let pegState = { scanned: Number(args['parent-from'] ?? 0) - 1, pegins: [] };
   try { pegState = JSON.parse(await readFile(pegFile, 'utf8')); } catch {}
+  if (!pegScript && parent?.walletRpc) { try { const label = `${chain.id} peg`; let addr = null; try { addr = Object.keys(await parent.walletRpc('getaddressesbylabel', [label]))[0] ?? null; } catch {} if (!addr) addr = await parent.walletRpc('getnewaddress', [label, 'bech32m']); const info = await parent.walletRpc('getaddressinfo', [addr]); pegScript = String(info.scriptPubKey).toLowerCase(); announced = -1; log(`peg-ins pay ${addr} (${pegScript.slice(0, 12)}…), announced with every tip`); } catch (e) { log(`no peg address announced: ${e.message}`); } }
   // SPEC 6.2: the desk
   const desk = chain.pledge && parent ? { policy: chain.pledge, cbFile: `${dir}/coinbases.json`, plFile: `${dir}/pledges.json`, coinbases: [], pledges: {}, k: await loadParentKernel(chain) } : null;
   if (desk) { try { desk.coinbases = JSON.parse(await readFile(desk.cbFile, 'utf8')).coinbases ?? []; } catch {} try { desk.pledges = JSON.parse(await readFile(desk.plFile, 'utf8')).pledges ?? {}; } catch {} }
@@ -176,7 +180,7 @@ if (cmd === 'produce') {
     try {
       const tip = await parent.height();
       if (tip > pegState.scanned) {
-        const found = await scanPegins(parent, { chainId: chain.id, from: pegState.scanned + 1, to: tip, onCoinbase: desk ? (c) => { if (c.height >= desk.policy.lockedFrom && !desk.coinbases.some((x) => x.txid === c.txid && x.vout === c.vout)) desk.coinbases.push(c); } : null });
+        const found = await scanPegins(parent, { chainId: chain.id, from: pegState.scanned + 1, to: tip, pegScript, onCoinbase: desk ? (c) => { if (c.height >= desk.policy.lockedFrom && !desk.coinbases.some((x) => x.txid === c.txid && x.vout === c.vout)) desk.coinbases.push(c); } : null });
         if (desk) await saveDesk();
         for (const p of found) if (!pegState.pegins.some((q) => q.txid === p.txid && q.vout === p.vout)) { pegState.pegins.push(p); log(`peg-in ${p.txid.slice(0, 16)}…:${p.vout}: ${p.amount} sats to ${p.script.slice(0, 12)}…, parent h${p.height}`); }
         pegState.scanned = tip; await savePegs();

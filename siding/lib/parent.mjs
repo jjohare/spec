@@ -32,7 +32,8 @@ export { pegMarkerData, parsePegMarker } from './marker.mjs'; // pure, so a brow
 // first taproot output is taken only when no peg wallet is given to ask. Amounts in sats.
 // does the peg wallet own this parent address (its own keys, or the imported k-of-n descriptor)
 async function ownedByPegWallet(parent, address) { try { const i = await parent.walletRpc('getaddressinfo', [address]); return !!(i.ismine || i.iswatchonly || i.solvable); } catch { return false; } }
-export async function scanPegins(parent, { chainId, from, to, onBlock = () => {}, onCoinbase = null }) {
+// pegScript: the script the signer announces as the peg (SPEC 6); an output paying it is the peg wherever it sits
+export async function scanPegins(parent, { chainId, from, to, pegScript = null, onBlock = () => {}, onCoinbase = null }) {
   const found = [];
   for (let h = from; h <= to; h++) {
     const block = await parent.rpc('getblock', [await parent.rpc('getblockhash', [h]), 2]); onBlock(h);
@@ -41,8 +42,8 @@ export async function scanPegins(parent, { chainId, from, to, onBlock = () => {}
     for (const tx of block.tx) {
       let script = null; for (const o of tx.vout) { const s = parsePegMarker(o.scriptPubKey.hex, chainId); if (s) { script = s; break; } }
       if (!script) continue;
-      const taproots = tx.vout.filter((o) => o.scriptPubKey.type === 'witness_v1_taproot'); let peg = null;
-      if (parent.walletRpc) { for (const o of taproots) { if (o.scriptPubKey.address && await ownedByPegWallet(parent, o.scriptPubKey.address)) { peg = o; break; } } } else peg = taproots[0] ?? null;
+      const taproots = tx.vout.filter((o) => o.scriptPubKey.type === 'witness_v1_taproot'); let peg = pegScript ? taproots.find((o) => o.scriptPubKey.hex?.toLowerCase() === pegScript.toLowerCase()) ?? null : null;
+      if (!peg && parent.walletRpc) { for (const o of taproots) { if (o.scriptPubKey.address && await ownedByPegWallet(parent, o.scriptPubKey.address)) { peg = o; break; } } } else if (!peg && !parent.walletRpc) peg = taproots[0] ?? null;
       if (!peg) continue; // a marker beside nothing the peg wallet owns is not a peg-in
       found.push({ txid: tx.txid, vout: peg.n, amount: Math.round(peg.value * 1e8), script, height: h, parentAddress: peg.scriptPubKey.address ?? null });
     }

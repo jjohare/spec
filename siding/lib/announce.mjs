@@ -14,14 +14,15 @@ export const HEADER_HEX = [328, 160];
 // at most TIP_HEADERS headers of hex: the disambiguation above holds only within that bound, and relay content is untrusted
 export const headerWidth = (content) => { if (!content.length || !/^[0-9a-f]+$/i.test(content)) return null; const w = HEADER_HEX.find((x) => content.length % x === 0); return w && content.length / w <= TIP_HEADERS ? w : null; };
 
-export function tipEvent({ events, key, chainId, headersHex, tip, mirrors = [] }) {
-  const start = tip - headersHex.length + 1;
-  return events.signEvent(key, { kind: TIP_KIND, tags: [['d', chainId], ['n', chainId], ['t', 'sidestr'], ['tip', String(tip)], ['alt', `sidestr headers ${start}-${tip} of ${chainId}`], ...mirrors.map((u) => ['u', u, 'mirror'])], content: headersHex.join('') });
+// pegScript: the parent output script a peg-in pays (SPEC 6), announced by the signer so a wallet can build one without asking anyone; the newest announcement wins, so it can rotate
+export function tipEvent({ events, key, chainId, headersHex, tip, mirrors = [], pegScript = null }) {
+  const start = tip - headersHex.length + 1; if (pegScript != null && !/^([0-9a-f]{2}){2,80}$/i.test(pegScript)) throw new Error('pegScript is a script of 2 to 80 bytes as hex');
+  return events.signEvent(key, { kind: TIP_KIND, tags: [['d', chainId], ['n', chainId], ['t', 'sidestr'], ['tip', String(tip)], ['alt', `sidestr headers ${start}-${tip} of ${chainId}`], ...mirrors.map((u) => ['u', u, 'mirror']), ...(pegScript ? [['peg', pegScript.toLowerCase()]] : [])], content: headersHex.join('') });
 }
 export function parseTip(ev) {
   const tag = (n) => (ev.tags ?? []).filter((t) => t[0] === n).map((t) => t[1]);
   const tip = Number(tag('tip')[0]); const content = String(ev.content ?? ''); const w = headerWidth(content); if (!Number.isInteger(tip) || !w) return null;
-  return { chainId: tag('d')[0], tip, mirrors: tag('u').map((u) => String(u).replace(/\/+$/, '')), headersHex: content.match(new RegExp(`.{${w}}`, 'g')) ?? [], headerBytes: w / 2, pubkey: ev.pubkey, created_at: ev.created_at, id: ev.id };
+  return { chainId: tag('d')[0], tip, mirrors: tag('u').map((u) => String(u).replace(/\/+$/, '')), headersHex: content.match(new RegExp(`.{${w}}`, 'g')) ?? [], headerBytes: w / 2, pegScript: (() => { const p = tag('peg')[0]; return p && /^([0-9a-f]{2}){2,80}$/i.test(p) ? p.toLowerCase() : null; })(), pubkey: ev.pubkey, created_at: ev.created_at, id: ev.id };
 }
 
 // the newest announcement for a chain, from any of the relays, within `timeout` ms
