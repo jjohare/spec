@@ -30,6 +30,16 @@ export { pegMarkerData, parsePegMarker } from './marker.mjs'; // pure, so a brow
 // Peg-ins in the parent's blocks [from, to]: a transaction with our marker; its peg output is the
 // taproot output the peg wallet owns (SPEC 6). A wallet's change may sit before the peg, so the
 // first taproot output is taken only when no peg wallet is given to ask. Amounts in sats.
+// A parent transaction handed to us over a relay (SPEC 11, kind 23503): broadcast it only if the node's own mempool
+// policy accepts it as it stands — testmempoolaccept, no options, no overrides — and never retry a refusal. The node is
+// the judge, not the producer; a refusal is logged with the node's reason so it can be read later.
+export async function relayParentTx(parent, hex, { seen = new Set(), maxBytes = 100000 } = {}) {
+  hex = String(hex ?? '').trim().toLowerCase(); if (!/^([0-9a-f]{2})+$/.test(hex) || hex.length / 2 > maxBytes) return { ok: false, reason: 'not a transaction hex' };
+  let txid; try { txid = (await parent.rpc('decoderawtransaction', [hex])).txid; } catch (e) { return { ok: false, reason: `not a transaction: ${e.message}` }; }
+  if (seen.has(txid)) return { ok: false, txid, reason: 'seen already', duplicate: true }; seen.add(txid);
+  const [t] = await parent.rpc('testmempoolaccept', [[hex]]); if (!t.allowed) return { ok: false, txid, reason: `${t['reject-reason'] ?? 'refused'}${t['reject-details'] ? ': ' + t['reject-details'] : ''}` };
+  await parent.rpc('sendrawtransaction', [hex]); return { ok: true, txid, vsize: t.vsize ?? null, fee: t.fees?.base ?? null };
+}
 // does the peg wallet own this parent address (its own keys, or the imported k-of-n descriptor)
 async function ownedByPegWallet(parent, address) { try { const i = await parent.walletRpc('getaddressinfo', [address]); return !!(i.ismine || i.iswatchonly || i.solvable); } catch { return false; } }
 // pegScript: the script the signer announces as the peg (SPEC 6); an output paying it is the peg wherever it sits

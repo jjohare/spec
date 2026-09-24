@@ -41,8 +41,8 @@ import { loadEngine, SCHEMA } from '../lib/engine.mjs';
 import { resolveParent } from '../lib/parents.mjs';
 import { signKeyPath, usesUnifiedSighash } from '../lib/txsign.mjs';
 import { makeSigner, loadKey } from '../lib/sign.mjs';
-import { makeEvents, subscribe, publish, TX_KIND } from '../lib/relay.mjs';
-import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts, lockOutputs } from '../lib/parent.mjs';
+import { makeEvents, subscribe, publish, TX_KIND, PARENT_TX_KIND } from '../lib/relay.mjs';
+import { makeParent, scanPegins, pegStatus, payPegout, paidPegouts, lockOutputs, relayParentTx } from '../lib/parent.mjs';
 import { verifyPledge, PLEDGE_KIND, maturityOf } from '../lib/pledge.mjs';
 import { sendCheckpoint, checkpointStatus, sentCheckpoints } from '../lib/checkpoint.mjs';
 import { loadParentKernel } from '../lib/engine.mjs';
@@ -169,6 +169,8 @@ if (cmd === 'produce') {
   const pegFile = `${dir}/pegins.json`; let pegState = { scanned: Number(args['parent-from'] ?? 0) - 1, pegins: [] };
   try { pegState = JSON.parse(await readFile(pegFile, 'utf8')); } catch {}
   if (!pegScript && parent?.walletRpc) { try { const label = `${chain.id} peg`; let addr = null; try { addr = Object.keys(await parent.walletRpc('getaddressesbylabel', [label]))[0] ?? null; } catch {} if (!addr) addr = await parent.walletRpc('getnewaddress', [label, 'bech32m']); const info = await parent.walletRpc('getaddressinfo', [addr]); pegScript = String(info.scriptPubKey).toLowerCase(); announced = -1; log(`peg-ins pay ${addr} (${pegScript.slice(0, 12)}…), announced with every tip`); } catch (e) { log(`no peg address announced: ${e.message}`); } }
+  // SPEC 11: parent transactions over the relays (kind 23503) — broadcast if and only if our node's policy accepts them
+  if (parent && relays.length) { const seenParent = new Set(); subscribe({ relays, chainId: chain.id, kind: PARENT_TX_KIND, verify: engine.nostr.verifyNostrEvent, log, onEvent: async (ev, url) => { try { const r = await relayParentTx(parent, ev.content, { seen: seenParent }); if (r.duplicate) return; log(r.ok ? `parent tx ${r.txid.slice(0, 16)}… from ${url}: accepted by the node's policy and broadcast (${r.vsize} vB)` : `parent tx ${(r.txid ?? '?').slice(0, 16)}… from ${url}: NOT broadcast, the node refused it: ${r.reason}`); } catch (e) { log(`parent tx from ${url}: ${e.message}`); } } }); }
   // SPEC 6.2: the desk
   const desk = chain.pledge && parent ? { policy: chain.pledge, cbFile: `${dir}/coinbases.json`, plFile: `${dir}/pledges.json`, coinbases: [], pledges: {}, k: await loadParentKernel(chain) } : null;
   if (desk) { try { desk.coinbases = JSON.parse(await readFile(desk.cbFile, 'utf8')).coinbases ?? []; } catch {} try { desk.pledges = JSON.parse(await readFile(desk.plFile, 'utf8')).pledges ?? {}; } catch {} }

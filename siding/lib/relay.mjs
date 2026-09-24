@@ -4,6 +4,7 @@
 // key and never needs an identity. Node 22+ has WebSocket built in; there is no dependency.
 export const TX_KIND = 23500;
 export const FAUCET_KIND = 23501; // content: an address (or script hex); a faucet may answer with a kind 23500 payment
+export const PARENT_TX_KIND = 23503; // content: a signed PARENT transaction as hex; a producer with a node broadcasts it if, and only if, its node's default policy accepts it
 
 export function makeEvents({ signer, hash }) {
   const eventId = (ev) => hash.bytesToHex(hash.sha256(new TextEncoder().encode(JSON.stringify([0, ev.pubkey, ev.created_at, ev.kind, ev.tags, ev.content]))));
@@ -11,7 +12,7 @@ export function makeEvents({ signer, hash }) {
     const ev = { pubkey: signer.pubkeyOf(key), created_at, kind, tags, content }; ev.id = eventId(ev);
     ev.sig = hash.bytesToHex(signer.schnorrSign(hash.hexToBytes(ev.id), key)); return ev;
   };
-  return { eventId, signEvent, txEvent: (key, chainId, hex) => signEvent(key, { kind: TX_KIND, tags: [['chain', chainId]], content: hex }) };
+  return { eventId, signEvent, txEvent: (key, chainId, hex) => signEvent(key, { kind: TX_KIND, tags: [['chain', chainId]], content: hex }), parentTxEvent: (key, chainId, hex) => signEvent(key, { kind: PARENT_TX_KIND, tags: [['chain', chainId]], content: hex }) };
 }
 
 // A producer's side: follow one or more relays for this chain's transactions, reconnecting with

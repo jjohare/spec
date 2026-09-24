@@ -259,7 +259,11 @@ relay, content the transaction hex, tagged `chain` = chain id; relays index only
 tags, so a producer subscribes by kind and checks the tag on receipt. The event's key is
 anyone's: the transaction authorises itself. A producer includes what validates. A wallet with
 nothing may publish a kind 23501 event, content an address, tagged the same way; a faucet that
-follows the relay may answer it with a payment, at its own limits.
+follows the relay may answer it with a payment, at its own limits. A wallet with no node may
+publish a signed *parent* transaction as a kind 23503 event, content the hex, tagged the same
+way: a producer that runs a parent node broadcasts it if and only if that node's mempool policy
+accepts it as it stands (no overrides), and never retries a refusal. The node is the judge; the
+producer only carries. This is how a peg-in built in a browser reaches the parent.
 
 **Checkpoints.** A producer may write its tip into the parent now and then, so the parent's
 proof of work bounds the chain's history. Proposal: [proposals/checkpoints.md](proposals/checkpoints.md).
@@ -312,6 +316,8 @@ status. The core above changes only when a proposal has run unchanged for a whil
 
 ## 16. Changelog
 
+- 2026-09-24 — 0.0.4 (later the same day): kind 23503 carries a signed parent transaction to a
+  producer with a node, which broadcasts it only if its node's own policy accepts it (11).
 - 2026-09-24 — 0.0.4: the signer announces the peg script with every tip (`peg` tag, 11) and
   the scanner takes the output paying it first (6): a wallet can peg in from a browser key with
   nothing but the announcement, and a third party can tell peg from change. The desk's pledge
@@ -336,6 +342,7 @@ status. The core above changes only when a proposal has run unchanged for a whil
 |---|---|---|
 | 23500 | transaction | ephemeral |
 | 23501 | faucet request, content an address | ephemeral |
+| 23503 | parent transaction to broadcast, content the hex | ephemeral |
 | 23510 | block proposal, content the block hex without its solution (9.1) | ephemeral |
 | 23511 | partial block signature, `e` = proposal (9.1) | ephemeral |
 | 23512 | peg-out PSBT to co-sign (9.1) | ephemeral |
