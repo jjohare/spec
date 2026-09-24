@@ -50,7 +50,7 @@ export function poolOverlay(chain, { assets, pools = new Map() }) {
     graph: { '@id': 'sidestr:overlay-pool', '@context': { sidestr: 'https://sidestr.com/ns#' }, '@graph': [
       { '@id': RULE, '@type': 'ValidationRule', ruleSet: 'btc:BlockContextRules', label: 'pool', errorCode: 'bad-pool',
         comment: 'A transaction spends at most one pool coin and recreates it: a swap keeps the constant product after a fee of 3 per 1000, an add mints shares pro rata, a remove withdraws pro rata and never empties the pool (SPEC 12.3).' } ] },
-    pools, byOutpoint, check, apply,
+    pools, byOutpoint, journal, check, apply, // journal: height -> [{ id, before }] for every applied height, so a page can replay a pool's history (trades, adds, removes)
     installChecks({ blocks, codec }) {
       blocks.registerChecks({ blockContext: { [RULE]: ({ block, height }) => {
         for (const { id, before } of (journal.get(height) ?? []).reverse()) { const cur = pools.get(id); if (cur) byOutpoint.delete(cur.outpoint); if (before) { pools.set(id, before); byOutpoint.set(before.outpoint, id); } else pools.delete(id); }
