@@ -1,6 +1,6 @@
 # A browser signer
 
-*Status: draft, 24 September 2026. Reference signer: [Podkey](https://github.com/JavaScriptSolidServer/podkey) 0.0.9; consumers: the [wallet](https://github.com/sidestr/wallet) and a forum on `sidestr:dreamlab`. A spend signed through it was mined on `sidestr:dreamlab` at block 431 (txid `7f3a6a63…`).* A proposal to the [sidestr spec](../SPEC.md); the record here is the working text, promoted into the spec once it has run unchanged for a while.
+*Status: draft, 24 September 2026. Reference signer: [Podkey](https://github.com/JavaScriptSolidServer/podkey) 0.0.9, opt-in from 0.0.10; consumers: the [wallet](https://github.com/sidestr/wallet) and a forum on `sidestr:dreamlab`. A spend signed through it was mined on `sidestr:dreamlab` at block 431 (txid `7f3a6a63…`).* A proposal to the [sidestr spec](../SPEC.md); the record here is the working text, promoted into the spec once it has run unchanged for a while.
 
 A sidestr coin pays `OP_1 <32-byte key>` with no tweak, so the key a person already holds for
 Nostr is the key that spends their coins, and a NIP-07 extension that guards that key could
@@ -22,9 +22,15 @@ key-path witness on every input, and its txid, or rejects with an `Error` whose 
 take), `not-yours` (an input it will not sign), `invalid` (a transaction it cannot read) or
 `unavailable` (no key, locked, or the chain could not be read). `window.nostr.sidestr.version`
 is `1`; `name`, optional, is what a page may call the signer in its own words ("Podkey will show
-you this spend"). The address of the key is `5120` followed by `getPublicKey()`; there is no other method.
+you this spend"); `enabled` says whether the person has turned sidechain spends on. The address of the key is `5120` followed by `getPublicKey()`; there is no other method.
 Nothing else is signed: a page that wants a generic signature over 32 bytes does not get one,
 because that signature is also a signature over any event id and any other chain's sighash.
+
+A signer may keep spends off until the person turns them on, since most people who hold a Nostr
+key never use a sidechain. The method stays present while they are off, with `enabled` false, so
+a page is never left without a way forward: the first request asks, in the signer's own window,
+whether to turn spends on, and goes on to the spend if the person agrees. Declining is
+`unsupported`. Turning spends off forgets every chain and its signer.
 
 Publishing stays with the page. A transaction authorises itself, so the kind 23500 event that
 carries it may come from any key (section 11) and a page should sign it with a throwaway one:
@@ -62,6 +68,10 @@ The page is not trusted for anything but the request.
 5. **Every time.** A spend is asked for every time. Trust given to an origin for events,
    encryption or login does not extend to spends, and a signer offers no "always allow".
 6. **Its own check.** Before returning, it verifies each signature as a validator would.
+
+A signer may keep a chain's validated state between requests, so the next spend checks only the
+blocks since, as the explorer does. Kept state is tied to the hash of the block at its height and
+dropped, with every block checked again, when the mirror's block there differs.
 
 ## Why here
 
