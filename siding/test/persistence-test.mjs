@@ -26,7 +26,8 @@ async function fixture(t) {
 function fault(t, method, target, partial = false) {
   const original = fs[method];
   fs[method] = (p, ...args) => {
-    if (p !== target) return original(p, ...args);
+    // blaketestnode before 5781862 writes the index in place; from it on, to `<index>.tmp-<pid>` and renames
+    if (p !== target && !String(p).startsWith(`${target}.tmp-`)) return original(p, ...args);
     if (partial) original(p, args[0].subarray(0, 11));
     throw Object.assign(new Error('injected ENOSPC'), { code: 'ENOSPC' });
   };
